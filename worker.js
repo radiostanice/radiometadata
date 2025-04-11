@@ -15,23 +15,30 @@ export default {
     const stationUrl = url.searchParams.get('url');
     
     if (!stationUrl) {
-      return new Response(JSON.stringify({ error: 'Missing station URL parameter' }), { 
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Missing station URL parameter' 
+      }), { 
         status: 400,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
       });
     }
 
     try {
-      // Try standard ICY metadata first
+      // Try ICY metadata headers first
       const icyResponse = await fetch(stationUrl, {
         headers: { 'Icy-MetaData': '1' },
         cf: { cacheEverything: false }
       });
 
+      const icyMetaInt = parseInt(icyResponse.headers.get('icy-metaint'));
       const icyTitle = icyResponse.headers.get('icy-title');
       const icyName = icyResponse.headers.get('icy-name');
-      
-      // If we have metadata, return it immediately
+
+      // If we have ICY metadata, return it
       if (icyTitle) {
         return new Response(JSON.stringify({
           success: true,
@@ -55,32 +62,54 @@ export default {
             title: `${rpData.artist} - ${rpData.title}`,
             isStationName: false
           }), {
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
           });
         } catch (e) {
           console.error('Radio Paradise API failed:', e);
         }
       }
 
-      // Fallback for streams without ICY metadata
-      const streamResponse = await fetch(stationUrl);
-      const text = await streamResponse.text();
-      
-      // Try to extract metadata from stream
-      const titleMatch = text.match(/StreamTitle=['"]([^'"]*)['"]/) || 
-                        text.match(/title=['"]([^'"]*)['"]/);
-      
-      if (titleMatch && titleMatch[1]) {
-        return new Response(JSON.stringify({
-          success: true,
-          title: titleMatch[1].trim(),
-          isStationName: false
-        }), {
-          headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
+      // If we have metadata interval, try to parse metadata from stream
+      if (icyMetaInt) {
+        const reader = icyResponse.body.getReader();
+        let buffer = new Uint8Array();
+        let metadataFound = false;
+        
+        while (!metadataFound) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          // Combine chunks
+          const newBuffer = new Uint8Array(buffer.length + value.length);
+          newBuffer.set(buffer);
+          newBuffer.set(value, buffer.length);
+          buffer = newBuffer;
+          
+          // Check for metadata marker
+          for (let i = 0; i < buffer.length - 1; i++) {
+            if (buffer[i] === 0x53 && buffer[i+1] === 0x74) { // 'St' in StreamTitle
+              const metadataStart = i;
+              const metadataString = new TextDecoder().decode(buffer.slice(metadataStart));
+              const titleMatch = metadataString.match(/StreamTitle=['"]([^'"]*)['"]/);
+              
+              if (titleMatch && titleMatch[1]) {
+                return new Response(JSON.stringify({
+                  success: true,
+                  title: titleMatch[1].trim(),
+                  isStationName: false
+                }), {
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              }
+            }
           }
-        });
+        }
       }
 
       return new Response(JSON.stringify({
