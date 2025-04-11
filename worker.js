@@ -15,35 +15,29 @@ export default {
     const stationUrl = url.searchParams.get('url');
     
     if (!stationUrl) {
-      return new Response(JSON.stringify({ error: 'Missing station URL' }), { 
+      return new Response(JSON.stringify({ error: 'Missing station URL parameter' }), { 
         status: 400,
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        }
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
       });
     }
 
     try {
-      // First try ICY metadata headers
+      // Try standard ICY metadata first
       const icyResponse = await fetch(stationUrl, {
         headers: { 'Icy-MetaData': '1' },
         cf: { cacheEverything: false }
       });
 
-      // Prepare basic metadata
-      const metadata = {
-        icyName: icyResponse.headers.get('icy-name'),
-        icyTitle: icyResponse.headers.get('icy-title'),
-        icyGenre: icyResponse.headers.get('icy-genre'),
-        success: false
-      };
-
-      // If we got ICY headers, return them
-      if (metadata.icyTitle || metadata.icyName) {
-        metadata.success = true;
-        return new Response(JSON.stringify(metadata), {
-          status: 200,
+      const icyTitle = icyResponse.headers.get('icy-title');
+      const icyName = icyResponse.headers.get('icy-name');
+      
+      // If we have metadata, return it immediately
+      if (icyTitle) {
+        return new Response(JSON.stringify({
+          success: true,
+          title: icyTitle,
+          isStationName: false
+        }), {
           headers: { 
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
@@ -51,33 +45,49 @@ export default {
         });
       }
 
-      // If no ICY headers, try parsing the metadata from the stream
-      const streamResponse = await fetch(stationUrl);
-      const reader = streamResponse.body.getReader();
-      let chunks = [];
-      let metadataFound = false;
-      let totalBytes = 0;
-      const MAX_BYTES = 8192; // Limit to first 8KB
-
-      while (!metadataFound && totalBytes < MAX_BYTES) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        chunks.push(value);
-        totalBytes += value.length;
-        const combined = Buffer.concat(chunks).toString('binary');
-        
-        // Look for common metadata patterns
-        const titleMatch = combined.match(/StreamTitle=['"]([^'"]*)['"]/i);
-        if (titleMatch) {
-          metadata.icyTitle = titleMatch[1].trim();
-          metadata.success = true;
-          metadataFound = true;
+      // Special handling for Radio Paradise
+      if (stationUrl.includes('radioparadise.com')) {
+        try {
+          const rpResponse = await fetch('https://api.radioparadise.com/api/now_playing');
+          const rpData = await rpResponse.json();
+          return new Response(JSON.stringify({
+            success: true,
+            title: `${rpData.artist} - ${rpData.title}`,
+            isStationName: false
+          }), {
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+          });
+        } catch (e) {
+          console.error('Radio Paradise API failed:', e);
         }
       }
 
-      return new Response(JSON.stringify(metadata), {
-        status: metadataFound ? 200 : 404,
+      // Fallback for streams without ICY metadata
+      const streamResponse = await fetch(stationUrl);
+      const text = await streamResponse.text();
+      
+      // Try to extract metadata from stream
+      const titleMatch = text.match(/StreamTitle=['"]([^'"]*)['"]/) || 
+                        text.match(/title=['"]([^'"]*)['"]/);
+      
+      if (titleMatch && titleMatch[1]) {
+        return new Response(JSON.stringify({
+          success: true,
+          title: titleMatch[1].trim(),
+          isStationName: false
+        }), {
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'No metadata found'
+      }), {
+        status: 404,
         headers: { 
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
@@ -87,8 +97,7 @@ export default {
     } catch (error) {
       return new Response(JSON.stringify({ 
         success: false,
-        error: error.message,
-        stack: error.stack
+        error: error.message
       }), {
         status: 500,
         headers: { 
