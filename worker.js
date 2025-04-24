@@ -47,7 +47,7 @@ export default {
 
       // Collect quality information
       const qualityInfo = {
-        bitrate: response.headers.get('icy-br') || 'Unknown',
+        bitrate: response.headers.get('icy-br') || null,
         metaInterval: response.headers.get('icy-metaint'),
         contentType: response.headers.get('content-type'),
         server: response.headers.get('server'),
@@ -67,8 +67,8 @@ export default {
         return createSuccessResponse(metadata, qualityInfo);
       }
 
-      // Final fallback
-      return createErrorResponse('No metadata found in stream', 404, qualityInfo);
+      // Final fallback - return quality info even if no metadata found
+      return createSuccessResponse(null, qualityInfo);
 
     } catch (error) {
       console.error('Metadata fetch error:', error);
@@ -119,13 +119,13 @@ async function tryAllMetadataMethods(response, qualityInfo) {
   }
 
   // 3. Try parsing OGG streams
-  if (qualityInfo.contentType.includes('ogg')) {
+  if (qualityInfo.contentType?.includes('ogg')) {
     const oggMetadata = await parseOggMetadata(response.clone());
     if (oggMetadata) return oggMetadata;
   }
 
   // 4. Try parsing MP3 streams
-  if (qualityInfo.contentType.includes('mpeg')) {
+  if (qualityInfo.contentType?.includes('mpeg')) {
     const mp3Metadata = await parseMp3Metadata(response.clone());
     if (mp3Metadata) return mp3Metadata;
   }
@@ -211,22 +211,35 @@ function isLikelyStationName(text) {
 
 // Response helpers
 function createSuccessResponse(title, quality = {}) {
+  // Only include quality info if we have valid data
+  const qualityResponse = {};
+  
+  if (quality.bitrate) {
+    qualityResponse.bitrate = quality.bitrate;
+  }
+  
+  if (quality.contentType) {
+    qualityResponse.format = getFormatFromContentType(quality.contentType);
+  }
+  
+  if (quality.metaInterval) {
+    qualityResponse.metaInt = quality.metaInterval;
+  }
+  
+  if (quality.responseTime) {
+    qualityResponse.responseTime = quality.responseTime;
+  }
+
   return new Response(JSON.stringify({
     success: true,
-    title: cleanTitle(title),
-    isStationName: isLikelyStationName(title),
-    quality: {
-      bitrate: quality.bitrate || 'Unknown',
-      format: getFormatFromContentType(quality.contentType),
-      metaInt: quality.metaInterval,
-      icyHeaders: quality.icyHeadersPresent,
-      responseTime: quality.responseTime || 0
-    }
+    title: title ? cleanTitle(title) : null,
+    isStationName: title ? isLikelyStationName(title) : true,
+    quality: Object.keys(qualityResponse).length > 0 ? qualityResponse : null
   }), {
     headers: { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=10' // Cache for 10 seconds
+      'Cache-Control': 'public, max-age=10'
     }
   });
 }
@@ -235,7 +248,7 @@ function createErrorResponse(message, status = 500, quality = {}) {
   return new Response(JSON.stringify({
     success: false,
     error: message,
-    quality: quality
+    quality: null // Never include quality info in error responses
   }), {
     status,
     headers: { 
@@ -257,10 +270,10 @@ function cleanTitle(title) {
 }
 
 function getFormatFromContentType(contentType) {
-  if (!contentType) return 'Unknown';
+  if (!contentType) return null;
   if (contentType.includes('ogg')) return 'OGG';
   if (contentType.includes('mpeg')) return 'MP3';
   if (contentType.includes('aac')) return 'AAC';
   if (contentType.includes('wav')) return 'WAV';
-  return contentType.split(';')[0];
+  return contentType.split(';')[0].split('/')[1] || 'Unknown';
 }
