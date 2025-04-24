@@ -1,123 +1,146 @@
 export default {
-  async fetch(request) {
-    // CORS preflight handling
+  async fetch(request, env) {
+    // Handle CORS preflight requests
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
         }
       });
     }
 
+    // Parse request URL
     const url = new URL(request.url);
     const stationUrl = url.searchParams.get('url');
     
     if (!stationUrl) {
-      return new Response(JSON.stringify({ 
-        success: false,
-        error: 'Missing station URL parameter' 
-      }), { 
-        status: 400,
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        }
-      });
+      return createErrorResponse('Missing station URL parameter', 400);
     }
 
     try {
-      // Enhanced metadata extraction for different stream types
+      // Configuration for different stream types
       const fetchOptions = {
         method: 'GET',
         headers: { 
           'Icy-MetaData': '1',
-          'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/1.0)'
+          'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/2.0)'
         },
-        cf: { cacheTtl: 15 } // Cache for 15 seconds
+        cf: { 
+          cacheTtl: 10,  // Cache for 10 seconds
+          cacheEverything: true
+        }
       };
 
-      // First try regular fetch for ICY headers
-      const response = await fetch(stationUrl, fetchOptions);
+      // Start timing the request
+      const startTime = Date.now();
       
-      // Check for ICY metadata headers first
-      const icyMetaInt = parseInt(response.headers.get('icy-metaint'));
-      const icyTitle = response.headers.get('icy-title');
-      const icyName = response.headers.get('icy-name');
+      // Fetch with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      fetchOptions.signal = controller.signal;
 
-      // Return ICY metadata if found
-      if (icyTitle) {
-        return respondWithSuccess(icyTitle);
-      }
+      const response = await fetch(stationUrl, fetchOptions);
+      clearTimeout(timeoutId);
 
-      // Special handling for Radio Paradise
+      // Collect quality information
+      const qualityInfo = {
+        bitrate: response.headers.get('icy-br') || 'Unknown',
+        metaInterval: response.headers.get('icy-metaint'),
+        contentType: response.headers.get('content-type'),
+        server: response.headers.get('server'),
+        responseTime: Date.now() - startTime,
+        icyHeadersPresent: response.headers.get('icy-metaint') !== null
+      };
+
+      // Special handling for known radio services
       if (stationUrl.includes('radioparadise.com')) {
-        try {
-          const rpResponse = await fetch('https://api.radioparadise.com/api/now_playing');
-          const rpData = await rpResponse.json();
-          return respondWithSuccess(`${rpData.artist} - ${rpData.title}`);
-        } catch (e) {
-          console.error('Radio Paradise API failed:', e);
-        }
+        return handleRadioParadise(qualityInfo);
       }
 
-      // Try parsing SHOUTcast style metadata if meta interval exists
-      if (icyMetaInt) {
-        const metadata = await parseMetadataFromStream(response, icyMetaInt);
-        if (metadata) return respondWithSuccess(metadata);
-      }
-
-      // Try parsing OGG/Vorbis metadata
-      try {
-        const oggMetadata = await parseOggMetadata(stationUrl);
-        if (oggMetadata) return respondWithSuccess(oggMetadata);
-      } catch (e) {
-        console.log('OGG metadata parsing failed:', e);
+      // Try different metadata extraction methods in order
+      const metadata = await tryAllMetadataMethods(response, qualityInfo);
+      
+      if (metadata) {
+        return createSuccessResponse(metadata, qualityInfo);
       }
 
       // Final fallback
-      return respondWithError('No metadata found');
-      
+      return createErrorResponse('No metadata found in stream', 404, qualityInfo);
+
     } catch (error) {
-      return respondWithError(error.message);
+      console.error('Metadata fetch error:', error);
+      return createErrorResponse(
+        error.name === 'AbortError' ? 'Request timeout' : error.message, 
+        500
+      );
     }
   }
 }
 
-// Helper functions
-function respondWithSuccess(title) {
-  return new Response(JSON.stringify({
-    success: true,
-    title: title.trim(),
-    isStationName: false
-  }), {
-    headers: { 
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*' 
-    }
-  });
+// Specialized handlers for specific radio services
+async function handleRadioParadise(qualityInfo) {
+  try {
+    const apiUrl = 'https://api.radioparadise.com/api/now_playing';
+    const response = await fetch(apiUrl, {
+      cf: { cacheTtl: 15 }
+    });
+    
+    if (!response.ok) throw new Error('API request failed');
+    
+    const data = await response.json();
+    qualityInfo.bitrate = '320'; // Radio Paradise streams are typically 320kbps
+    
+    return createSuccessResponse(
+      `${data.artist} - ${data.title}`,
+      qualityInfo
+    );
+  } catch (e) {
+    console.error('Radio Paradise API failed:', e);
+    return createErrorResponse('Radio Paradise API unavailable', 503, qualityInfo);
+  }
 }
 
-function respondWithError(error) {
-  return new Response(JSON.stringify({ 
-    success: false,
-    error: error 
-  }), {
-    status: 500,
-    headers: { 
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*' 
-    }
-  });
+// Try all available metadata extraction methods
+async function tryAllMetadataMethods(response, qualityInfo) {
+  // 1. Check ICY headers first (most common)
+  const icyTitle = response.headers.get('icy-title');
+  if (icyTitle && !isLikelyStationName(icyTitle)) {
+    return icyTitle;
+  }
+
+  // 2. Parse metadata from stream if meta interval exists
+  const metaInt = parseInt(response.headers.get('icy-metaint'));
+  if (metaInt) {
+    const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
+    if (streamMetadata) return streamMetadata;
+  }
+
+  // 3. Try parsing OGG streams
+  if (qualityInfo.contentType.includes('ogg')) {
+    const oggMetadata = await parseOggMetadata(response.clone());
+    if (oggMetadata) return oggMetadata;
+  }
+
+  // 4. Try parsing MP3 streams
+  if (qualityInfo.contentType.includes('mpeg')) {
+    const mp3Metadata = await parseMp3Metadata(response.clone());
+    if (mp3Metadata) return mp3Metadata;
+  }
+
+  return null;
 }
 
+// Improved ICY metadata parser
 async function parseMetadataFromStream(response, metaInt) {
   const reader = response.body.getReader();
   let buffer = new Uint8Array();
   let bytesRead = 0;
-  
-  while (bytesRead < metaInt * 2) { // Read up to 2 metadata intervals
+  const maxBytesToRead = metaInt * 3; // Read up to 3 metadata blocks
+
+  while (bytesRead < maxBytesToRead) {
     const { done, value } = await reader.read();
     if (done) break;
     
@@ -126,26 +149,118 @@ async function parseMetadataFromStream(response, metaInt) {
     newBuffer.set(buffer);
     newBuffer.set(value, buffer.length);
     buffer = newBuffer;
-    
+
     // Look for metadata marker
-    for (let i = 0; i < buffer.length - 1; i++) {
-      if (buffer[i] === 0x53 && buffer[i+1] === 0x74) { // 'St' in StreamTitle
-        const metadataStart = i;
-        const metadataString = new TextDecoder().decode(buffer.slice(metadataStart));
+    const metadata = findMetadataInBuffer(buffer, metaInt);
+    if (metadata) return metadata;
+  }
+
+  return null;
+}
+
+function findMetadataInBuffer(buffer, metaInt) {
+  // Look for the metadata marker pattern
+  for (let i = 0; i < buffer.length - 16; i++) {
+    // Common patterns indicating metadata start
+    if (
+      (buffer[i] === 0x53 && buffer[i+1] === 0x74 && buffer[i+2] === 0x72) || // 'Str' in StreamTitle
+      (buffer[i] === 0x4D && buffer[i+1] === 0x65 && buffer[i+2] === 0x74)    // 'Met' in Metadata
+    ) {
+      try {
+        const metadataString = new TextDecoder().decode(buffer.slice(i));
         const titleMatch = metadataString.match(/StreamTitle=['"]([^'"]*)['"]/);
         
-        if (titleMatch?.[1]) {
+        if (titleMatch?.[1] && !isLikelyStationName(titleMatch[1])) {
           return titleMatch[1];
         }
+      } catch (e) {
+        console.log('Metadata parsing error:', e);
       }
     }
   }
   return null;
 }
 
-async function parseOggMetadata(streamUrl) {
-  // Implement OGG/Vorbis metadata parsing here
-  // This would require more complex implementation similar to icecast-metadata-js
-  // For now, we'll just return null since it requires significant work
+// Basic OGG metadata parser (simplified)
+async function parseOggMetadata(response) {
+  // This would require a full OGG parser implementation
+  // For now, we'll just return null as it's complex
   return null;
+}
+
+// Basic MP3 metadata parser (simplified)
+async function parseMp3Metadata(response) {
+  // This would require ID3 tag parsing
+  // For now, we'll just return null
+  return null;
+}
+
+// Helper to detect station names vs song titles
+function isLikelyStationName(text) {
+  if (!text) return true;
+  const t = text.toLowerCase();
+  return (
+    t.includes('radio') ||
+    t.includes('fm') ||
+    t.includes('station') ||
+    t.length > 40 ||  // Very long text is probably not a song title
+    t.split('-').length > 3 ||  // Too many hyphens
+    t.split(' ').length > 8  // Too many words
+  );
+}
+
+// Response helpers
+function createSuccessResponse(title, quality = {}) {
+  return new Response(JSON.stringify({
+    success: true,
+    title: cleanTitle(title),
+    isStationName: isLikelyStationName(title),
+    quality: {
+      bitrate: quality.bitrate || 'Unknown',
+      format: getFormatFromContentType(quality.contentType),
+      metaInt: quality.metaInterval,
+      icyHeaders: quality.icyHeadersPresent,
+      responseTime: quality.responseTime || 0
+    }
+  }), {
+    headers: { 
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=10' // Cache for 10 seconds
+    }
+  });
+}
+
+function createErrorResponse(message, status = 500, quality = {}) {
+  return new Response(JSON.stringify({
+    success: false,
+    error: message,
+    quality: quality
+  }), {
+    status,
+    headers: { 
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
+}
+
+function cleanTitle(title) {
+  if (!title) return '';
+  return title
+    .replace(/<\/?[^>]+(>|$)/g, '') // Remove HTML tags
+    .replace(/(https?:\/\/[^\s]+)/g, '') // Remove URLs
+    .replace(/^\s+|\s+$/g, '') // Trim whitespace
+    .replace(/\|.*$/, '') // Remove everything after pipe
+    .replace(/\s+/g, ' ') // Collapse multiple spaces
+    .trim();
+}
+
+function getFormatFromContentType(contentType) {
+  if (!contentType) return 'Unknown';
+  if (contentType.includes('ogg')) return 'OGG';
+  if (contentType.includes('mpeg')) return 'MP3';
+  if (contentType.includes('aac')) return 'AAC';
+  if (contentType.includes('wav')) return 'WAV';
+  return contentType.split(';')[0];
 }
