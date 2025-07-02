@@ -138,7 +138,7 @@ async function parseMetadataFromStream(response, metaInt) {
   const reader = response.body.getReader();
   let buffer = new Uint8Array();
   let bytesRead = 0;
-  const maxBytesToRead = metaInt * 3; // Read up to 3 metadata blocks
+  const maxBytesToRead = metaInt * 5; // Read up to 5 metadata blocks
 
   while (bytesRead < maxBytesToRead) {
     const { done, value } = await reader.read();
@@ -150,26 +150,28 @@ async function parseMetadataFromStream(response, metaInt) {
     newBuffer.set(value, buffer.length);
     buffer = newBuffer;
 
-    // Look for metadata marker
-    const metadata = findMetadataInBuffer(buffer, metaInt);
-    if (metadata) return metadata;
+    // Try both metadata detection methods in order
+    const metadataFromPattern = findMetadataInBuffer(buffer, metaInt);
+    if (metadataFromPattern) return metadataFromPattern;
+    
+    const metadataFromMultiple = findMultipleMetadataPatterns(buffer);
+    if (metadataFromMultiple) return metadataFromMultiple;
   }
 
   return null;
 }
 
 function findMetadataInBuffer(buffer, metaInt) {
-  // Look for the metadata marker pattern
+  // Look for hexadecimal patterns indicating metadata start
   for (let i = 0; i < buffer.length - 16; i++) {
-    // Common patterns indicating metadata start
     if (
       (buffer[i] === 0x53 && buffer[i+1] === 0x74 && buffer[i+2] === 0x72) || // 'Str' in StreamTitle
       (buffer[i] === 0x4D && buffer[i+1] === 0x65 && buffer[i+2] === 0x74)    // 'Met' in Metadata
     ) {
       try {
         const metadataString = new TextDecoder().decode(buffer.slice(i));
+        // First try the standard StreamTitle pattern
         const titleMatch = metadataString.match(/StreamTitle=['"]([^'"]*)['"]/);
-        
         if (titleMatch?.[1] && !isLikelyStationName(titleMatch[1])) {
           return titleMatch[1];
         }
@@ -178,6 +180,36 @@ function findMetadataInBuffer(buffer, metaInt) {
       }
     }
   }
+  return null;
+}
+
+function findMultipleMetadataPatterns(buffer) {
+  // Look for multiple possible metadata patterns
+  const patterns = [
+    /StreamTitle=['"]([^'"]*)['"]/,     // Standard ICY metadata
+    /Title=['"]([^'"]*)['"]/,           // Alternative casing
+    /TITLE=['"]([^'"]*)['"]/,           // Uppercase
+    /(?:Now Playing|Sada se pušta|Sada slušate|Slušate|Trenutno slušate): ([^\x00]*)/i,  // Naxi-style
+    /([^\-]+)\s*-\s*([^\-]+)/            // Artist - Title format
+  ];
+
+  try {
+    const text = new TextDecoder().decode(buffer);
+    
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match?.[1] && !isLikelyStationName(match[1])) {
+        // For artist-title pattern, combine the groups
+        if (pattern === /([^\-]+)\s*-\s*([^\-]+)/ && match[2]) {
+          return `${match[1].trim()} - ${match[2].trim()}`;
+        }
+        return match[1].trim();
+      }
+    }
+  } catch (e) {
+    console.log('Metadata pattern matching error:', e);
+  }
+  
   return null;
 }
 
