@@ -92,11 +92,11 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
     // Map of Radio Paradise station URLs to API channel parameters
     const stationMap = {
       'stream.radioparadise.com/aac-320': 'main',
-      'stream.radioparadise.com/mellow-aac-320': 'mellow',
-      'stream.radioparadise.com/rock-aac-320': 'rock',
-      'stream.radioparadise.com/global-aac-320': 'global',
+      'stream.radioparadise.com/mellow-aac-320': '1',
+      'stream.radioparadise.com/rock-aac-320': '2',
+      'stream.radioparadise.com/global-aac-320': '3',
       'stream.radioparadise.com/radio2050-aac-320': '2050',
-      'stream.radioparadise.com/serenity-aac-320': 'serenity'
+      'stream.radioparadise.com/serenity-aac-320': '42'
     };
 
     // Check which station URL we're dealing with
@@ -109,7 +109,7 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
       throw new Error('Unknown Radio Paradise station');
     }
 
-    const apiUrl = `https://api.radioparadise.com/api/now_playing?chan=${stationMap[channel]}`;
+    const apiUrl = `https://api.radioparadise.com/api/now_playing?chan={stationMap[channel]}`;
     const response = await fetch(apiUrl, { cf: { cacheTtl: 15 } });
 
     if (!response.ok) {
