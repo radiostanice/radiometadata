@@ -56,9 +56,9 @@ export default {
       };
 
       // Special handling for known radio services
-      if (stationUrl.includes('radioparadise.com')) {
-        return handleRadioParadise(qualityInfo);
-      }
+	  if (stationUrl.includes('radioparadise.com')) {
+		return handleRadioParadise(qualityInfo, stationUrl);
+	  }
 
       // Try different metadata extraction methods in order
       const metadata = await tryAllMetadataMethods(response, qualityInfo);
@@ -81,9 +81,27 @@ export default {
 }
 
 // Specialized handlers for specific radio services
-async function handleRadioParadise(qualityInfo) {
+async function handleRadioParadise(qualityInfo, stationUrl) {
   try {
-    const apiUrl = 'https://api.radioparadise.com/api/now_playing';
+    // Map station URLs to their respective API parameters
+    const stationMap = {
+      'https://stream.radioparadise.com/aac-320': 'main',
+      'https://stream.radioparadise.com/mellow-320': 'mellow',
+      'https://stream.radioparadise.com/rock-320': 'rock',
+      'https://stream.radioparadise.com/global-320': 'global',
+      'https://stream.radioparadise.com/radio2050-320': '2050',
+      'https://stream.radioparadise.com/serenity-320': 'serenity'
+    };
+    
+    // Find which station this is
+    const stationKey = Object.keys(stationMap).find(key => stationUrl.startsWith(key));
+    if (!stationKey) {
+      throw new Error('Unknown Radio Paradise station');
+    }
+    
+    const param = stationMap[stationKey];
+    const apiUrl = `https://api.radioparadise.com/api/now_playing?chan=${param}`;
+    
     const response = await fetch(apiUrl, {
       cf: { cacheTtl: 15 }
     });
