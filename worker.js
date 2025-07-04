@@ -81,20 +81,28 @@ export default {
 }
 
 // Specialized handlers for specific radio services
+// Updated Radio Paradise handler in worker.js
 async function handleRadioParadise(qualityInfo, stationUrl) {
   try {
     // Map station URLs to their respective API parameters
     const stationMap = {
       'https://stream.radioparadise.com/aac-320': 'main',
-      'https://stream.radioparadise.com/mellow-320': 'mellow',
-      'https://stream.radioparadise.com/rock-320': 'rock',
-      'https://stream.radioparadise.com/global-320': 'global',
-      'https://stream.radioparadise.com/radio2050-320': '2050',
-      'https://stream.radioparadise.com/serenity-320': 'serenity'
+      'https://stream.radioparadise.com/mellow-aac-320': 'mellow',
+      'https://stream.radioparadise.com/rock-aac-320': 'rock',
+      'https://stream.radioparadise.com/global-aac-320': 'global',
+      'https://stream.radioparadise.com/radio2050-aac-320': '2050',
+      'https://stream.radioparadise.com/serenity-aac-320': 'serenity'
     };
     
-    // Find which station this is
-    const stationKey = Object.keys(stationMap).find(key => stationUrl.startsWith(key));
+    // Normalize the URL for matching (remove any query parameters)
+    const normalizedUrl = stationUrl.split('?')[0];
+    
+    // Find which station this is (using startsWith to catch variations)
+    const stationKey = Object.keys(stationMap).find(key => 
+      normalizedUrl.startsWith(key.replace('-aac-', '-')) || // Handles both formats
+      normalizedUrl.startsWith(key)
+    );
+    
     if (!stationKey) {
       throw new Error('Unknown Radio Paradise station');
     }
@@ -109,10 +117,19 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
     if (!response.ok) throw new Error('API request failed');
     
     const data = await response.json();
-    qualityInfo.bitrate = '320'; // Radio Paradise streams are typically 320kbps
+    qualityInfo.bitrate = '320'; // Radio Paradise AAC streams are 320kbps
+    
+    // Format the artist and title
+    let metadata = `${data.artist} - ${data.title}`;
+    
+    // Clean up common Radio Paradise tags
+    metadata = metadata
+      .replace(/\[[^\]]+\]/g, '') // Remove anything in brackets
+      .replace(/\([^)]+\)/g, '')  // Remove anything in parentheses
+      .trim();
     
     return createSuccessResponse(
-      `${data.artist} - ${data.title}`,
+      metadata,
       qualityInfo
     );
   } catch (e) {
