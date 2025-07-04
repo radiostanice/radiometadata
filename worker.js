@@ -96,7 +96,7 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
       'stream.radioparadise.com/rock-320': '2',
       'stream.radioparadise.com/global-320': '3',
       'stream.radioparadise.com/radio2050-320': '2050',
-      'stream.radioparadise.com/serenity-320': '42'
+      'stream.radioparadise.com/serenity': '42'
     };
 
     // Check which station URL we're dealing with
