@@ -80,61 +80,55 @@ export default {
   }
 }
 
-// Specialized handlers for specific radio services
-// Updated Radio Paradise handler in worker.js
+// Updated handleRadioParadise function
 async function handleRadioParadise(qualityInfo, stationUrl) {
   try {
-    // Map station URLs to their respective API parameters
+    // Normalize the URL (remove query params and protocol variations)
+    const cleanUrl = stationUrl
+      .replace(/^https?:\/\//, '')  // Remove http(s)://
+      .split('?')[0]               // Remove query params
+      .replace(/\/$/, '');         // Remove trailing slash
+
+    // Map of Radio Paradise station URLs to API channel parameters
     const stationMap = {
-      'https://stream.radioparadise.com/aac-320': 'main',
-      'https://stream.radioparadise.com/mellow-aac-320': 'mellow',
-      'https://stream.radioparadise.com/rock-aac-320': 'rock',
-      'https://stream.radioparadise.com/global-aac-320': 'global',
-      'https://stream.radioparadise.com/radio2050-aac-320': '2050',
-      'https://stream.radioparadise.com/serenity-aac-320': 'serenity'
+      'stream.radioparadise.com/aac-320': 'main',
+      'stream.radioparadise.com/mellow-aac-320': 'mellow',
+      'stream.radioparadise.com/rock-aac-320': 'rock',
+      'stream.radioparadise.com/global-aac-320': 'global',
+      'stream.radioparadise.com/radio2050-aac-320': '2050',
+      'stream.radioparadise.com/serenity-aac-320': 'serenity'
     };
-    
-    // Normalize the URL for matching (remove any query parameters)
-    const normalizedUrl = stationUrl.split('?')[0];
-    
-    // Find which station this is (using startsWith to catch variations)
-    const stationKey = Object.keys(stationMap).find(key => 
-      normalizedUrl.startsWith(key.replace('-aac-', '-')) || // Handles both formats
-      normalizedUrl.startsWith(key)
+
+    // Check which station URL we're dealing with
+    let channel = Object.keys(stationMap).find(key => 
+      cleanUrl.includes(key)
     );
-    
-    if (!stationKey) {
+
+    if (!channel) {
+      console.error('Radio Paradise station not recognized:', cleanUrl);
       throw new Error('Unknown Radio Paradise station');
     }
-    
-    const param = stationMap[stationKey];
-    const apiUrl = `https://api.radioparadise.com/api/now_playing?chan=${param}`;
-    
-    const response = await fetch(apiUrl, {
-      cf: { cacheTtl: 15 }
-    });
-    
-    if (!response.ok) throw new Error('API request failed');
-    
+
+    const apiUrl = `https://api.radioparadise.com/api/now_playing?chan=${stationMap[channel]}`;
+    const response = await fetch(apiUrl, { cf: { cacheTtl: 15 } });
+
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
+
     const data = await response.json();
-    qualityInfo.bitrate = '320'; // Radio Paradise AAC streams are 320kbps
-    
-    // Format the artist and title
-    let metadata = `${data.artist} - ${data.title}`;
-    
-    // Clean up common Radio Paradise tags
-    metadata = metadata
-      .replace(/\[[^\]]+\]/g, '') // Remove anything in brackets
-      .replace(/\([^)]+\)/g, '')  // Remove anything in parentheses
+    qualityInfo.bitrate = '320'; // AAC streams are 320kbps
+    qualityInfo.format = 'AAC';
+
+    // Clean up metadata (remove tags, brackets, etc.)
+    const title = `${data.artist} - ${data.title}`
+      .replace(/\[.*?\]|\(.*?\)/g, '') // Remove [tags] or (text)
       .trim();
-    
-    return createSuccessResponse(
-      metadata,
-      qualityInfo
-    );
+
+    return createSuccessResponse(title, qualityInfo);
   } catch (e) {
-    console.error('Radio Paradise API failed:', e);
-    return createErrorResponse('Radio Paradise API unavailable', 503, qualityInfo);
+    console.error('Radio Paradise metadata error:', e);
+    return createErrorResponse(`Radio Paradise: ${e.message}`, 503, qualityInfo);
   }
 }
 
