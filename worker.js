@@ -29,7 +29,7 @@ export default {
           'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/2.0)'
         },
         cf: { 
-          cacheTtl: 5,  // Reduced cache to 5 seconds
+          cacheTtl: 5,
           cacheEverything: true
         }
       };
@@ -84,11 +84,10 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
   try {
     // Normalize the URL (remove query params and protocol variations)
     const cleanUrl = stationUrl
-      .replace(/^https?:\/\//, '')  // Remove http(s)://
-      .split('?')[0]               // Remove query params
-      .replace(/\/$/, '');         // Remove trailing slash
+      .replace(/^https?:\/\//, '')
+      .split('?')[0]
+      .replace(/\/$/, '');
 
-    // Map of Radio Paradise station URLs to API channel parameters
     const stationMap = {
       'stream.radioparadise.com/aac-320': 'main',
       'stream.radioparadise.com/mellow-320': '1',
@@ -98,10 +97,7 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
       'stream.radioparadise.com/serenity': '42'
     };
 
-    // Check which station URL we're dealing with
-    let channel = Object.keys(stationMap).find(key => 
-      cleanUrl.includes(key)
-    );
+    let channel = Object.keys(stationMap).find(key => cleanUrl.includes(key));
 
     if (!channel) {
       console.error('Radio Paradise station not recognized:', cleanUrl);
@@ -111,7 +107,7 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
     const apiUrl = `https://api.radioparadise.com/api/now_playing?chan=${stationMap[channel]}`;
     const response = await fetch(apiUrl, { 
       cf: { 
-        cacheTtl: 5 // Reduced cache time for faster updates
+        cacheTtl: 5
       } 
     });
 
@@ -120,12 +116,11 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
     }
 
     const data = await response.json();
-    qualityInfo.bitrate = '320'; // AAC streams are 320kbps
+    qualityInfo.bitrate = '320';
     qualityInfo.format = 'AAC';
 
-    // Clean up metadata (remove tags, brackets, etc.)
     const title = `${data.artist} - ${data.title}`
-      .replace(/\[.*?\]|\(.*?\)/g, '') // Remove [tags] or (text)
+      .replace(/\[.*?\]|\(.*?\)/g, '')
       .trim();
 
     return createSuccessResponse(title, qualityInfo);
@@ -136,52 +131,53 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
 }
 
 async function tryAllMetadataMethods(response, qualityInfo) {
-  // 1. Check ICY headers first (most common)
-  const icyTitle = response.headers.get('icy-title');
-  if (icyTitle && !isLikelyStationName(icyTitle)) {
-    return icyTitle;
+  try {
+    // 1. Check ICY headers first (most common)
+    const icyTitle = response.headers.get('icy-title');
+    if (icyTitle && !isLikelyStationName(icyTitle)) {
+      return icyTitle;
+    }
+
+    // 2. Parse metadata from stream if meta interval exists
+    const metaInt = parseInt(response.headers.get('icy-metaint'));
+    if (metaInt) {
+      const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
+      if (streamMetadata) return streamMetadata;
+    }
+
+    // 3. Try parsing SHOUTcast v2 metadata
+    const shoutcastMetadata = await parseShoutcastV2Metadata(response.clone());
+    if (shoutcastMetadata) return shoutcastMetadata;
+
+    // 4. Try parsing OGG streams
+    if (qualityInfo.contentType?.includes('ogg')) {
+      const oggMetadata = await parseOggMetadata(response.clone());
+      if (oggMetadata) return oggMetadata;
+    }
+
+    // 5. Try parsing MP3 streams
+    if (qualityInfo.contentType?.includes('mpeg')) {
+      const mp3Metadata = await parseMp3Metadata(response.clone());
+      if (mp3Metadata) return mp3Metadata;
+    }
+
+    return null;
+  } catch (e) {
+    console.error('Metadata extraction error:', e);
+    return null;
   }
-
-  // 2. Parse metadata from stream if meta interval exists
-  const metaInt = parseInt(response.headers.get('icy-metaint'));
-  if (metaInt) {
-    const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
-    if (streamMetadata) return streamMetadata;
-  }
-
-  // 3. Try parsing SHOUTcast v2 metadata
-  const shoutcastMetadata = await parseShoutcastV2Metadata(response.clone());
-  if (shoutcastMetadata) return shoutcastMetadata;
-
-  // 4. Try parsing OGG streams
-  if (qualityInfo.contentType?.includes('ogg')) {
-    const oggMetadata = await parseOggMetadata(response.clone());
-    if (oggMetadata) return oggMetadata;
-  }
-
-  // 5. Try parsing MP3 streams
-  if (qualityInfo.contentType?.includes('mpeg')) {
-    const mp3Metadata = await parseMp3Metadata(response.clone());
-    if (mp3Metadata) return mp3Metadata;
-  }
-
-  return null;
 }
 
-// New: SHOUTcast v2 metadata parser
 async function parseShoutcastV2Metadata(response) {
   try {
-    // Read the first 10KB of the response
     const reader = response.body.getReader();
     const { value } = await reader.read();
     const chunk = new TextDecoder().decode(value.slice(0, 10240));
     
     // Look for SHOUTcast v2 metadata pattern
-    if (chunk.includes('StreamTitle=')) {
-      const match = chunk.match(/StreamTitle='([^']*)'/);
-      if (match && match[1] && !isLikelyStationName(match[1])) {
-        return match[1];
-      }
+    const matches = chunk.match(/StreamTitle='([^']*)';/);
+    if (matches && matches[1] && !isLikelyStationName(matches[1])) {
+      return matches[1].trim();
     }
   } catch (e) {
     console.log('Shoutcast v2 metadata parsing error:', e);
@@ -194,7 +190,6 @@ async function parseMetadataFromStream(response, metaInt) {
     const reader = response.body.getReader();
     let buffer = new Uint8Array();
     let bytesRead = 0;
-    // Only read up to 2 metadata blocks for faster response
     const maxBytesToRead = metaInt * 2;
 
     while (bytesRead < maxBytesToRead) {
@@ -207,10 +202,8 @@ async function parseMetadataFromStream(response, metaInt) {
       newBuffer.set(value, buffer.length);
       buffer = newBuffer;
 
-      // Look for metadata after each audio block
       if (bytesRead >= metaInt) {
-        const offset = metaInt * Math.floor(bytesRead / metaInt);
-        const metadata = findMetadataInBuffer(buffer, offset, metaInt);
+        const metadata = extractIcyMetadata(buffer, metaInt);
         if (metadata) return metadata;
       }
     }
@@ -222,11 +215,11 @@ async function parseMetadataFromStream(response, metaInt) {
   }
 }
 
-function findMetadataInBuffer(buffer, offset, metaInt) {
-  // Check if we have enough data for metadata
+function extractIcyMetadata(buffer, metaInt) {
+  const offset = metaInt * Math.floor(buffer.length / metaInt);
+  
   if (buffer.length < offset + 1) return null;
   
-  // Get metadata length (in 16-byte blocks)
   const metaLength = buffer[offset] * 16;
   if (metaLength === 0 || offset + 1 + metaLength > buffer.length) return null;
 
@@ -234,18 +227,16 @@ function findMetadataInBuffer(buffer, offset, metaInt) {
     const metadataBytes = buffer.slice(offset + 1, offset + 1 + metaLength);
     const metadataString = new TextDecoder().decode(metadataBytes);
     
-    // Try both single and double quote patterns
-    const patterns = [
-      /StreamTitle=(['"])([^'"]*)\1/,
-      /StreamTitle='([^']*)'/,
-      /StreamTitle="([^"]*)"/
-    ];
-    
-    for (const pattern of patterns) {
-      const match = metadataString.match(pattern);
-      if (match?.[1] && !isLikelyStationName(match[1])) {
-        return match[1];
-      }
+    // Improved metadata pattern matching
+    const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
+    if (streamTitleMatch && streamTitleMatch[1] && !isLikelyStationName(streamTitleMatch[1])) {
+      return streamTitleMatch[1].trim();
+    }
+
+    // Alternative pattern for some streams
+    const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
+    if (altMatch && altMatch[1] && !isLikelyStationName(altMatch[1])) {
+      return altMatch[1].trim();
     }
   } catch (e) {
     console.log('Metadata parsing error:', e);
@@ -254,18 +245,14 @@ function findMetadataInBuffer(buffer, offset, metaInt) {
 }
 
 async function parseOggMetadata(response) {
-  // This is a simplified OGG parser focused on finding metadata quickly
   try {
     const reader = response.body.getReader();
     const { value } = await reader.read();
     const header = new TextDecoder().decode(value.slice(0, 1024));
     
-    // Look for common OGG metadata patterns
-    if (header.includes('TITLE=')) {
-      const match = header.match(/TITLE=([^\n\r]+)/);
-      if (match && match[1]) {
-        return match[1].trim();
-      }
+    const match = header.match(/TITLE=(.+?)(?:;|$)/);
+    if (match && match[1]) {
+      return match[1].trim();
     }
   } catch (e) {
     console.log('OGG metadata parsing error:', e);
@@ -274,18 +261,15 @@ async function parseOggMetadata(response) {
 }
 
 async function parseMp3Metadata(response) {
-  // Simplified ID3 parser for quick metadata extraction
   try {
     const reader = response.body.getReader();
     const { value } = await reader.read();
     
-    // Check for ID3 tag at the beginning
     if (value.length >= 10) {
       const id3Header = new TextDecoder().decode(value.slice(0, 3));
       if (id3Header === 'ID3') {
-        // Very basic ID3 tag extraction
-        const frame = new TextDecoder().decode(value.slice(10, 60));
-        const match = frame.match(/TIT2[^\x00]*([^\x00]+)/);
+        const frame = new TextDecoder().decode(value.slice(10, 100));
+        const match = frame.match(/TIT2[\x00-\xFF]{3}(.+?)\x00/);
         if (match && match[1]) {
           return match[1].trim();
         }
@@ -304,31 +288,19 @@ function isLikelyStationName(text) {
     t.includes('radio') ||
     t.includes('fm') ||
     t.includes('station') ||
-    t.length > 50 ||       // Increased threshold for longer titles
-    t.split('-').length > 4 || // More hyphens
-    t.split(' ').length > 10   // More words
+    t.length > 50 ||
+    t.split('-').length > 4 ||
+    t.split(' ').length > 10
   );
 }
 
 function createSuccessResponse(title, quality = {}) {
-  // Only include quality info if we have valid data
   const qualityResponse = {};
   
-  if (quality.bitrate) {
-    qualityResponse.bitrate = quality.bitrate;
-  }
-  
-  if (quality.contentType) {
-    qualityResponse.format = getFormatFromContentType(quality.contentType);
-  }
-  
-  if (quality.metaInterval) {
-    qualityResponse.metaInt = quality.metaInterval;
-  }
-  
-  if (quality.responseTime) {
-    qualityResponse.responseTime = quality.responseTime;
-  }
+  if (quality.bitrate) qualityResponse.bitrate = quality.bitrate;
+  if (quality.contentType) qualityResponse.format = getFormatFromContentType(quality.contentType);
+  if (quality.metaInterval) qualityResponse.metaInt = quality.metaInterval;
+  if (quality.responseTime) qualityResponse.responseTime = quality.responseTime;
 
   return new Response(JSON.stringify({
     success: true,
@@ -339,7 +311,7 @@ function createSuccessResponse(title, quality = {}) {
     headers: { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=5' // Reduced cache time
+      'Cache-Control': 'public, max-age=5'
     }
   });
 }
@@ -348,7 +320,7 @@ function createErrorResponse(message, status = 500, quality = {}) {
   return new Response(JSON.stringify({
     success: false,
     error: message,
-    quality: null // Never include quality info in error responses
+    quality: null
   }), {
     status,
     headers: { 
@@ -361,12 +333,12 @@ function createErrorResponse(message, status = 500, quality = {}) {
 function cleanTitle(title) {
   if (!title) return '';
   return title
-    .replace(/<\/?[^>]+(>|$)/g, '') // Remove HTML tags
-    .replace(/(https?:\/\/[^\s]+)/g, '') // Remove URLs
-    .replace(/^\s+|\s+$/g, '') // Trim whitespace
-    .replace(/\|.*$/, '') // Remove everything after pipe
-    .replace(/\s+/g, ' ') // Collapse multiple spaces
-    .replace(/\x00/g, '') // Remove null bytes
+    .replace(/<\/?[^>]+(>|$)/g, '')
+    .replace(/(https?:\/\/[^\s]+)/g, '')
+    .replace(/^\s+|\s+$/g, '')
+    .replace(/\|.*$/, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\x00/g, '')
     .trim();
 }
 
