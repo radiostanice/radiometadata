@@ -533,7 +533,9 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
   }
 }
 
-async function handleRadioParadise(qualityInfo, stationUrl) {
+async function handleRadioParadise(stationUrl) {
+  const qualityInfo = {}; // Initialize empty qualityInfo object
+  
   try {
     // Normalize the URL (remove query params and protocol variations)
     const cleanUrl = stationUrl
