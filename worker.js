@@ -21,12 +21,12 @@ export default {
     }
 
     try {
-      // Configuration for different stream types
+      // Configuration for fetching the stream
       const fetchOptions = {
         method: 'GET',
         headers: { 
           'Icy-MetaData': '1',
-          'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/2.0)'
+          'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)'
         },
         cf: { 
           cacheTtl: 5,
@@ -60,15 +60,26 @@ export default {
         return handleRadioParadise(qualityInfo, stationUrl);
       }
 
-      // Try different metadata extraction methods in order
-      const metadata = await tryAllMetadataMethods(response, qualityInfo);
-      
-      if (metadata) {
-        return createSuccessResponse(metadata, qualityInfo);
+      // Check if we have ICY headers for metadata
+      const icyTitle = response.headers.get('icy-title');
+      if (icyTitle && !isLikelyStationName(icyTitle)) {
+        return createSuccessResponse(icyTitle, qualityInfo);
       }
 
+      // Parse metadata from stream if meta interval exists
+      const metaInt = parseInt(response.headers.get('icy-metaint'));
+      if (metaInt) {
+        const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
+        if (streamMetadata) {
+          return createSuccessResponse(streamMetadata, qualityInfo);
+        }
+      }
+
+      // If no metadata found, try alternative methods
+      const metadata = await tryAlternativeMethods(response, qualityInfo);
+      
       // Final fallback - return quality info even if no metadata found
-      return createSuccessResponse(null, qualityInfo);
+      return createSuccessResponse(metadata || null, qualityInfo);
 
     } catch (error) {
       console.error('Metadata fetch error:', error);
@@ -130,57 +141,34 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
   }
 }
 
-async function tryAllMetadataMethods(response, qualityInfo) {
+async function tryAlternativeMethods(response, qualityInfo) {
   try {
-    // 1. Check ICY headers first (most common)
-    const icyTitle = response.headers.get('icy-title');
-    if (icyTitle && !isLikelyStationName(icyTitle)) {
-      return icyTitle;
-    }
-
-    // 2. Parse metadata from stream if meta interval exists
-    const metaInt = parseInt(response.headers.get('icy-metaint'));
-    if (metaInt) {
-      const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
-      if (streamMetadata) return streamMetadata;
-    }
-
-    // 3. Try parsing SHOUTcast v2 metadata
-    const shoutcastMetadata = await parseShoutcastV2Metadata(response.clone());
-    if (shoutcastMetadata) return shoutcastMetadata;
-
-    // 4. Try parsing OGG streams
-    if (qualityInfo.contentType?.includes('ogg')) {
-      const oggMetadata = await parseOggMetadata(response.clone());
-      if (oggMetadata) return oggMetadata;
-    }
-
-    // 5. Try parsing MP3 streams
-    if (qualityInfo.contentType?.includes('mpeg')) {
-      const mp3Metadata = await parseMp3Metadata(response.clone());
-      if (mp3Metadata) return mp3Metadata;
+    // Check for SHOUTcast v1 metadata (similar to ICY)
+    const shoutcastMetadata = await parseShoutcastV1Metadata(response.clone());
+    if (shoutcastMetadata && !isLikelyStationName(shoutcastMetadata)) {
+      return shoutcastMetadata;
     }
 
     return null;
   } catch (e) {
-    console.error('Metadata extraction error:', e);
+    console.error('Alternative metadata extraction error:', e);
     return null;
   }
 }
 
-async function parseShoutcastV2Metadata(response) {
+async function parseShoutcastV1Metadata(response) {
   try {
     const reader = response.body.getReader();
     const { value } = await reader.read();
-    const chunk = new TextDecoder().decode(value.slice(0, 10240));
+    const chunk = new TextDecoder().decode(value.slice(0, 4096));
     
-    // Look for SHOUTcast v2 metadata pattern
-    const matches = chunk.match(/StreamTitle='([^']*)';/);
-    if (matches && matches[1] && !isLikelyStationName(matches[1])) {
+    // Look for SHOUTcast v1 metadata pattern (same as ICY)
+    const matches = chunk.match(/StreamTitle=['"](.*?)['"]/);
+    if (matches && matches[1]) {
       return matches[1].trim();
     }
   } catch (e) {
-    console.log('Shoutcast v2 metadata parsing error:', e);
+    console.log('Shoutcast v1 metadata parsing error:', e);
   }
   return null;
 }
@@ -190,7 +178,7 @@ async function parseMetadataFromStream(response, metaInt) {
     const reader = response.body.getReader();
     let buffer = new Uint8Array();
     let bytesRead = 0;
-    const maxBytesToRead = metaInt * 2;
+    const maxBytesToRead = metaInt * 2; // Read enough to ensure we get metadata
 
     while (bytesRead < maxBytesToRead) {
       const { done, value } = await reader.read();
@@ -225,64 +213,35 @@ function extractIcyMetadata(buffer, metaInt) {
 
   try {
     const metadataBytes = buffer.slice(offset + 1, offset + 1 + metaLength);
-    const metadataString = new TextDecoder().decode(metadataBytes);
+    let metadataString = new TextDecoder().decode(metadataBytes);
+    
+    // Check for empty metadata
+    if (!metadataString.trim()) return null;
     
     // Improved metadata pattern matching
     const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
-    if (streamTitleMatch && streamTitleMatch[1] && !isLikelyStationName(streamTitleMatch[1])) {
-      return streamTitleMatch[1].trim();
+    if (streamTitleMatch && streamTitleMatch[1]) {
+      const title = streamTitleMatch[1].trim();
+      return title && !isLikelyStationName(title) ? title : null;
     }
 
     // Alternative pattern for some streams
     const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
-    if (altMatch && altMatch[1] && !isLikelyStationName(altMatch[1])) {
-      return altMatch[1].trim();
+    if (altMatch && altMatch[1]) {
+      const title = altMatch[1].trim();
+      return title && !isLikelyStationName(title) ? title : null;
     }
+    
+    // If we have non-empty metadata but no pattern matched, return as-is
+    return metadataString.trim() || null;
   } catch (e) {
     console.log('Metadata parsing error:', e);
   }
   return null;
 }
 
-async function parseOggMetadata(response) {
-  try {
-    const reader = response.body.getReader();
-    const { value } = await reader.read();
-    const header = new TextDecoder().decode(value.slice(0, 1024));
-    
-    const match = header.match(/TITLE=(.+?)(?:;|$)/);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-  } catch (e) {
-    console.log('OGG metadata parsing error:', e);
-  }
-  return null;
-}
-
-async function parseMp3Metadata(response) {
-  try {
-    const reader = response.body.getReader();
-    const { value } = await reader.read();
-    
-    if (value.length >= 10) {
-      const id3Header = new TextDecoder().decode(value.slice(0, 3));
-      if (id3Header === 'ID3') {
-        const frame = new TextDecoder().decode(value.slice(10, 100));
-        const match = frame.match(/TIT2[\x00-\xFF]{3}(.+?)\x00/);
-        if (match && match[1]) {
-          return match[1].trim();
-        }
-      }
-    }
-  } catch (e) {
-    console.log('MP3 metadata parsing error:', e);
-  }
-  return null;
-}
-
 function isLikelyStationName(text) {
-  if (!text) return true;
+  if (!text || !text.trim()) return true;
   const t = text.toLowerCase();
   return (
     t.includes('radio') ||
@@ -320,7 +279,10 @@ function createErrorResponse(message, status = 500, quality = {}) {
   return new Response(JSON.stringify({
     success: false,
     error: message,
-    quality: null
+    quality: quality ? {
+      responseTime: quality.responseTime,
+      server: quality.server
+    } : null
   }), {
     status,
     headers: { 
