@@ -29,10 +29,6 @@ export default {
           'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)',
           'Accept-Charset': 'utf-8'
         },
-        cf: { 
-          cacheTtl: 5,
-          cacheEverything: true
-        }
       };
 
       // Start timing the request
@@ -296,7 +292,7 @@ function createSuccessResponse(title, quality = {}) {
     headers: { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=5'
+      'Cache-Control': 'no-store, max-age=0'
     }
   });
 }
