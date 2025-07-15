@@ -80,8 +80,8 @@ export default {
       // If no metadata found, try alternative methods
       const metadata = await tryAlternativeMethods(response, qualityInfo);
       
-      // Final fallback - return quality info even if no metadata found
-      return createSuccessResponse(metadata || null, qualityInfo);
+      // Return quality info with metadata (or empty metadata if none found)
+      return createSuccessResponse(metadata, qualityInfo);
 
     } catch (error) {
       console.error('Metadata fetch error:', error);
@@ -152,35 +152,35 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
       }
     }
     
-    // Skip empty metadata or filler strings
-    if (!metadataString.trim() || 
-        metadataString.trim() === 'StreamTitle=\'\';' || 
+    // Skip specific empty metadata patterns but keep others for analysis
+    if (metadataString.trim() === 'StreamTitle=\'\';' || 
         metadataString.trim() === 'StreamTitle="";') {
       return null;
     }
     
     const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
-    if (streamTitleMatch && streamTitleMatch[1]) {
+    if (streamTitleMatch) {
       let title = streamTitleMatch[1].trim();
-      if (!title) return null;
+      // Only return null for truly empty titles (after trim)
+      if (title === '') return null;
       
-      return title && !isLikelyStationName(title) ? title : null;
+      return !isLikelyStationName(title) ? title : null;
     }
 
     // Alternative pattern for some streams
     const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
-    if (altMatch && altMatch[1]) {
+    if (altMatch) {
       let title = altMatch[1].trim();
-      if (!title) return null;
-      return title && !isLikelyStationName(title) ? title : null;
+      if (title === '') return null;
+      return !isLikelyStationName(title) ? title : null;
     }
     
     // If we have non-empty metadata but no pattern matched, return as-is
     return metadataString.trim() || null;
   } catch (e) {
     console.log('Metadata parsing error:', e);
+    return null;
   }
-  return null;
 }
 
 async function handleRadioParadise(qualityInfo, stationUrl) {
@@ -222,10 +222,7 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
     qualityInfo.bitrate = '320';
     qualityInfo.format = 'AAC';
 
-    const title = `${data.artist} - ${data.title}`
-      .replace(/\[.*?\]|\(.*?\)/g, '')
-      .trim();
-
+    const title = `${data.artist} - ${data.title}`;
     return createSuccessResponse(title, qualityInfo);
   } catch (e) {
     console.error('Radio Paradise metadata error:', e);
@@ -291,7 +288,9 @@ function createSuccessResponse(title, quality = {}) {
   return new Response(JSON.stringify({
     success: true,
     title: title ? cleanTitle(title) : null,
+    rawTitle: title || null,  // Include the raw title for reference
     isStationName: title ? isLikelyStationName(title) : true,
+    hasMetadata: title !== null,  // Explicitly indicate if metadata was found
     quality: Object.keys(qualityResponse).length > 0 ? qualityResponse : null
   }), {
     headers: { 
@@ -320,16 +319,32 @@ function createErrorResponse(message, status = 500, quality = {}) {
 }
 
 function cleanTitle(title) {
-  if (!title) return '';
-  return title
-    .replace(/<\/?[^>]+(>|$)/g, '')
-    .replace(/(https?:\/\/[^\s]+)/g, '')
-    .replace(/^\s+|\s+$/g, '')
-    .replace(/\|.*$/, '')
-    .replace(/\s+/g, ' ')
-    .replace(/\x00/g, '')
-    .replace(/^Trenutno:\s*/i, '')  // Remove "Trenutno:" prefix
+  if (!title) return null;
+  
+  // First basic cleanup
+  let cleaned = title
+    .replace(/<\/?[^>]+(>|$)/g, '')  // Remove HTML tags
+    .replace(/(https?:\/\/[^\s]+)/g, '')  // Remove URLs
+    .replace(/\x00/g, '')  // Remove null bytes
     .trim();
+    
+  // Remove common prefixes if they exist
+  const prefixes = [
+    'Trenutno:', 'Now Playing:', 'Current:', 
+    'Playing:', 'On Air:', 'NP:', 'Now:', '♪'
+  ];
+  
+  for (const prefix of prefixes) {
+    if (cleaned.startsWith(prefix)) {
+      cleaned = cleaned.slice(prefix.length).trim();
+    }
+  }
+  
+  // Trim any remaining whitespace and normalize spaces
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  
+  // Only return null for truly empty strings
+  return cleaned || null;
 }
 
 function getFormatFromContentType(contentType) {
