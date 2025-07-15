@@ -93,7 +93,6 @@ export default {
   }
 }
 
-// Enhanced metadata monitoring with better character encoding support
 async function streamMetadataMonitor(response, metaInt) {
   try {
     const reader = response.body.getReader();
@@ -104,7 +103,7 @@ async function streamMetadataMonitor(response, metaInt) {
 
     while (attempts < maxAttempts && !metadataFound) {
       // Read exactly one metadata interval plus potential metadata block
-      const targetBytes = metaInt + (attempts === 0 ? 0 : 1) + 255; // 255 is max metadata size (16*16-1)
+      const targetBytes = metaInt + (attempts === 0 ? 0 : 1) + 255;
 
       while (buffer.length < targetBytes) {
         const { done, value } = await reader.read();
@@ -129,7 +128,6 @@ async function streamMetadataMonitor(response, metaInt) {
   }
 }
 
-// Enhanced metadata extraction with better encoding support
 function extractIcyMetadata(buffer, metaInt, offset = 0) {
   offset = offset || (metaInt * Math.floor(buffer.length / metaInt));
   
@@ -154,16 +152,17 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
       }
     }
     
-    // Check for empty metadata
-    if (!metadataString.trim()) return null;
+    // Skip empty metadata or filler strings
+    if (!metadataString.trim() || 
+        metadataString.trim() === 'StreamTitle=\'\';' || 
+        metadataString.trim() === 'StreamTitle="";') {
+      return null;
+    }
     
-    // Improved metadata pattern matching
     const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
     if (streamTitleMatch && streamTitleMatch[1]) {
       let title = streamTitleMatch[1].trim();
-      
-      // Fix common encoding issues for Serbian characters
-      title = fixSerbianCharacters(title);
+      if (!title) return null;
       
       return title && !isLikelyStationName(title) ? title : null;
     }
@@ -172,34 +171,16 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
     const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
     if (altMatch && altMatch[1]) {
       let title = altMatch[1].trim();
-      title = fixSerbianCharacters(title);
+      if (!title) return null;
       return title && !isLikelyStationName(title) ? title : null;
     }
     
     // If we have non-empty metadata but no pattern matched, return as-is
-    return fixSerbianCharacters(metadataString.trim()) || null;
+    return metadataString.trim() || null;
   } catch (e) {
     console.log('Metadata parsing error:', e);
   }
   return null;
-}
-
-// Fix Serbian Latin character encoding issues
-function fixSerbianCharacters(text) {
-  if (!text) return text;
-  
-  // Common misencoded Serbian characters
-  const charMap = {
-    'Ä': 'Č', 'ä': 'č',
-    'Å¡': 'š', 
-    'Ä‡': 'ć', 
-    'Ä‘': 'đ',
-    'Å¾': 'ž',
-    // Add more mappings if needed
-  };
-  
-  // Replace misencoded characters
-  return text.replace(/[ÄäÅ¡Ä‡Ä‘Å¾]/g, match => charMap[match] || match);
 }
 
 async function handleRadioParadise(qualityInfo, stationUrl) {
@@ -295,8 +276,7 @@ function isLikelyStationName(text) {
     t.split('-').length > 4 ||
     t.split(' ').length > 10 ||
     t.includes('stream') ||
-    t.includes('broadcast') ||
-    t.includes('live')
+    t.includes('broadcast')
   );
 }
 
@@ -348,6 +328,7 @@ function cleanTitle(title) {
     .replace(/\|.*$/, '')
     .replace(/\s+/g, ' ')
     .replace(/\x00/g, '')
+    .replace(/^Trenutno:\s*/i, '')  // Remove "Trenutno:" prefix
     .trim();
 }
 
