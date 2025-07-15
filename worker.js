@@ -20,47 +20,30 @@ export default {
       return createErrorResponse('Missing station URL parameter', 400);
     }
 
-// Replace your complex fetch logic with this simpler version
-try {
-  const response = await fetch(stationUrl, {
-    method: 'GET',
-    headers: { 
-      'Icy-MetaData': '1',
-      'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/2.0)'
-    },
-    signal: AbortSignal.timeout(5000), // Simplified timeout
-  });
+    try {
+      // Configuration for different stream types
+      const fetchOptions = {
+        method: 'GET',
+        headers: { 
+          'Icy-MetaData': '1',
+          'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/2.0)'
+        },
+        cf: { 
+          cacheTtl: 5,  // Reduced cache to 5 seconds
+          cacheEverything: true
+        }
+      };
 
       // Start timing the request
       const startTime = Date.now();
       
-      // Try fast fetch first
+      // Fetch with timeout (reduced to 3 seconds)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), fastTimeout);
-      
-      let response = await fetch(stationUrl, {
-        ...fetchOptions,
-        signal: controller.signal
-      }).catch(() => null);
-      
-      clearTimeout(timeoutId);
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      fetchOptions.signal = controller.signal;
 
-      // If fast fetch failed or doesn't have metadata, try with longer timeout
-      if (!response || !response.headers.get('icy-metaint')) {
-        const slowController = new AbortController();
-        const slowTimeoutId = setTimeout(() => slowController.abort(), slowTimeout);
-        
-        response = await fetch(stationUrl, {
-          ...fetchOptions,
-          signal: slowController.signal,
-          cf: { 
-            cacheTtl: 5,  // Short cache for metadata
-            cacheEverything: true
-          }
-        });
-        
-        clearTimeout(slowTimeoutId);
-      }
+      const response = await fetch(stationUrl, fetchOptions);
+      clearTimeout(timeoutId);
 
       // Collect quality information
       const qualityInfo = {
@@ -97,169 +80,266 @@ try {
   }
 }
 
-// Improved Radio Paradise metadata handler
 async function handleRadioParadise(qualityInfo, stationUrl) {
   try {
-    // Extract channel from URL more reliably
-    const urlObj = new URL(stationUrl);
-    const pathParts = urlObj.pathname.split('/').filter(p => p);
-    const channelMap = {
-      'aac-320': 'main',
-      'mellow-320': '1',
-      'rock-320': '2', 
-      'global-320': '3',
-      'radio2050-320': '2050',
-      'serenity': '42'
+    // Normalize the URL (remove query params and protocol variations)
+    const cleanUrl = stationUrl
+      .replace(/^https?:\/\//, '')  // Remove http(s)://
+      .split('?')[0]               // Remove query params
+      .replace(/\/$/, '');         // Remove trailing slash
+
+    // Map of Radio Paradise station URLs to API channel parameters
+    const stationMap = {
+      'stream.radioparadise.com/aac-320': 'main',
+      'stream.radioparadise.com/mellow-320': '1',
+      'stream.radioparadise.com/rock-320': '2',
+      'stream.radioparadise.com/global-320': '3',
+      'stream.radioparadise.com/radio2050-320': '2050',
+      'stream.radioparadise.com/serenity': '42'
     };
-    
-    const channelKey = Object.keys(channelMap).find(key => 
-      pathParts.some(part => part.includes(key))
+
+    // Check which station URL we're dealing with
+    let channel = Object.keys(stationMap).find(key => 
+      cleanUrl.includes(key)
     );
-    
-    if (!channelKey) throw new Error('Unknown Radio Paradise station');
-    
-    // Use newer v3 API endpoint
-    const apiUrl = `https://api.radioparadise.com/api/v3/now_playing/${channelMap[channelKey]}`;
+
+    if (!channel) {
+      console.error('Radio Paradise station not recognized:', cleanUrl);
+      throw new Error('Unknown Radio Paradise station');
+    }
+
+    const apiUrl = `https://api.radioparadise.com/api/now_playing?chan=${stationMap[channel]}`;
     const response = await fetch(apiUrl, { 
       cf: { 
-        cacheTtl: 5,  // Short cache for frequent updates
-        cacheEverything: true
-      }
+        cacheTtl: 5 // Reduced cache time for faster updates
+      } 
     });
 
-    if (!response.ok) throw new Error(`API request failed: ${response.status}`);
-    
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
+
     const data = await response.json();
-    qualityInfo.bitrate = '320';
+    qualityInfo.bitrate = '320'; // AAC streams are 320kbps
     qualityInfo.format = 'AAC';
-    
-    // Extract artist and title, handling missing fields
-    const artist = data.artist?.trim() || '';
-    const title = (data.title?.trim() || '').replace(/\[.*?\]|\(.*?\)/g, '').trim();
-    
-    return createSuccessResponse(
-      artist && title ? `${artist} - ${title}` : title || artist,
-      qualityInfo
-    );
-    
+
+    // Clean up metadata (remove tags, brackets, etc.)
+    const title = `${data.artist} - ${data.title}`
+      .replace(/\[.*?\]|\(.*?\)/g, '') // Remove [tags] or (text)
+      .trim();
+
+    return createSuccessResponse(title, qualityInfo);
   } catch (e) {
     console.error('Radio Paradise metadata error:', e);
     return createErrorResponse(`Radio Paradise: ${e.message}`, 503, qualityInfo);
   }
 }
 
-// Optimized metadata extraction pipeline
 async function tryAllMetadataMethods(response, qualityInfo) {
-  // 1. Check ICY headers first (most common) - keep it simple
+  // 1. Check ICY headers first (most common)
   const icyTitle = response.headers.get('icy-title');
   if (icyTitle && !isLikelyStationName(icyTitle)) {
-    return cleanTitle(icyTitle);
+    return icyTitle;
   }
 
   // 2. Parse metadata from stream if meta interval exists
   const metaInt = parseInt(response.headers.get('icy-metaint'));
   if (metaInt) {
-    return await parseMetadataFromStream(response.clone(), metaInt);
+    const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
+    if (streamMetadata) return streamMetadata;
   }
 
-  // For other formats, return null (keep it simple for now)
+  // 3. Try parsing SHOUTcast v2 metadata
+  const shoutcastMetadata = await parseShoutcastV2Metadata(response.clone());
+  if (shoutcastMetadata) return shoutcastMetadata;
+
+  // 4. Try parsing OGG streams
+  if (qualityInfo.contentType?.includes('ogg')) {
+    const oggMetadata = await parseOggMetadata(response.clone());
+    if (oggMetadata) return oggMetadata;
+  }
+
+  // 5. Try parsing MP3 streams
+  if (qualityInfo.contentType?.includes('mpeg')) {
+    const mp3Metadata = await parseMp3Metadata(response.clone());
+    if (mp3Metadata) return mp3Metadata;
+  }
+
   return null;
 }
 
-// Faster metadata stream parser with timeout
-async function parseMetadataFromStream(response, metaInt) {
-  const METADATA_TIMEOUT = 5000;
-  const READ_SIZE = metaInt + 256; // Read first metadata block plus some buffer
+// New: SHOUTcast v2 metadata parser
+async function parseShoutcastV2Metadata(response) {
+  try {
+    // Read the first 10KB of the response
+    const reader = response.body.getReader();
+    const { value } = await reader.read();
+    const chunk = new TextDecoder().decode(value.slice(0, 10240));
+    
+    // Look for SHOUTcast v2 metadata pattern
+    if (chunk.includes('StreamTitle=')) {
+      const match = chunk.match(/StreamTitle='([^']*)'/);
+      if (match && match[1] && !isLikelyStationName(match[1])) {
+        return match[1];
+      }
+    }
+  } catch (e) {
+    console.log('Shoutcast v2 metadata parsing error:', e);
+  }
+  return null;
+}
 
+async function parseMetadataFromStream(response, metaInt) {
   try {
     const reader = response.body.getReader();
-    const { value } = await Promise.race([
-      reader.read(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), METADATA_TIMEOUT)
-      )
-    ]);
+    let buffer = new Uint8Array();
+    let bytesRead = 0;
+    // Only read up to 2 metadata blocks for faster response
+    const maxBytesToRead = metaInt * 2;
 
-    if (!value) return null;
+    while (bytesRead < maxBytesToRead) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      bytesRead += value.length;
+      const newBuffer = new Uint8Array(buffer.length + value.length);
+      newBuffer.set(buffer);
+      newBuffer.set(value, buffer.length);
+      buffer = newBuffer;
 
-    // Simple metadata extraction (like in your working version)
-    const str = new TextDecoder().decode(value);
-    const titleMatch = str.match(/StreamTitle=['"]([^'"]*)['"]/);
-    return titleMatch?.[1] && !isLikelyStationName(titleMatch[1]) 
-      ? cleanTitle(titleMatch[1]) 
-      : null;
+      // Look for metadata after each audio block
+      if (bytesRead >= metaInt) {
+        const offset = metaInt * Math.floor(bytesRead / metaInt);
+        const metadata = findMetadataInBuffer(buffer, offset, metaInt);
+        if (metadata) return metadata;
+      }
+    }
+
+    return null;
   } catch (e) {
-    console.log('Metadata stream parsing error:', e);
+    console.error('Stream metadata parsing error:', e);
     return null;
   }
 }
 
-// More robust buffer analysis
-function findMetadataInBuffer(buffer, metaInt) {
-  // Convert first 128 bytes to string for quick check
-  const str = new TextDecoder().decode(buffer.slice(0, Math.min(128, buffer.length)));
+function findMetadataInBuffer(buffer, offset, metaInt) {
+  // Check if we have enough data for metadata
+  if (buffer.length < offset + 1) return null;
   
-  // Match common metadata patterns
-  const titleMatch = str.match(/StreamTitle=['"]([^'"]*)['"]/);
-  if (titleMatch?.[1] && !isLikelyStationName(titleMatch[1])) {
-    return titleMatch[1];
-  }
+  // Get metadata length (in 16-byte blocks)
+  const metaLength = buffer[offset] * 16;
+  if (metaLength === 0 || offset + 1 + metaLength > buffer.length) return null;
 
-  // For binary metadata formats
-  if (buffer.length >= 16) {
-    const header = Array.from(buffer.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+  try {
+    const metadataBytes = buffer.slice(offset + 1, offset + 1 + metaLength);
+    const metadataString = new TextDecoder().decode(metadataBytes);
     
-    // Check for common binary metadata patterns
-    if (/53 74 72 65 61 6d 54 69 74 6c 65/.test(header)) { // "StreamTitle" in hex
-      try {
-        const fullStr = new TextDecoder().decode(buffer);
-        const binaryTitleMatch = fullStr.match(/StreamTitle=['"]([^'"]*)['"]/);
-        return binaryTitleMatch?.[1] && !isLikelyStationName(binaryTitleMatch[1]) 
-          ? binaryTitleMatch[1] 
-          : null;
-      } catch (e) {
-        console.log('Binary metadata decode error:', e);
+    // Try both single and double quote patterns
+    const patterns = [
+      /StreamTitle=(['"])([^'"]*)\1/,
+      /StreamTitle='([^']*)'/,
+      /StreamTitle="([^"]*)"/
+    ];
+    
+    for (const pattern of patterns) {
+      const match = metadataString.match(pattern);
+      if (match?.[1] && !isLikelyStationName(match[1])) {
+        return match[1];
       }
     }
+  } catch (e) {
+    console.log('Metadata parsing error:', e);
+  }
+  return null;
+}
+
+async function parseOggMetadata(response) {
+  // This is a simplified OGG parser focused on finding metadata quickly
+  try {
+    const reader = response.body.getReader();
+    const { value } = await reader.read();
+    const header = new TextDecoder().decode(value.slice(0, 1024));
+    
+    // Look for common OGG metadata patterns
+    if (header.includes('TITLE=')) {
+      const match = header.match(/TITLE=([^\n\r]+)/);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+  } catch (e) {
+    console.log('OGG metadata parsing error:', e);
+  }
+  return null;
+}
+
+async function parseMp3Metadata(response) {
+  // Simplified ID3 parser for quick metadata extraction
+  try {
+    const reader = response.body.getReader();
+    const { value } = await reader.read();
+    
+    // Check for ID3 tag at the beginning
+    if (value.length >= 10) {
+      const id3Header = new TextDecoder().decode(value.slice(0, 3));
+      if (id3Header === 'ID3') {
+        // Very basic ID3 tag extraction
+        const frame = new TextDecoder().decode(value.slice(10, 60));
+        const match = frame.match(/TIT2[^\x00]*([^\x00]+)/);
+        if (match && match[1]) {
+          return match[1].trim();
+        }
+      }
+    }
+  } catch (e) {
+    console.log('MP3 metadata parsing error:', e);
+  }
+  return null;
+}
+
+function isLikelyStationName(text) {
+  if (!text) return true;
+  const t = text.toLowerCase();
+  return (
+    t.includes('radio') ||
+    t.includes('fm') ||
+    t.includes('station') ||
+    t.length > 50 ||       // Increased threshold for longer titles
+    t.split('-').length > 4 || // More hyphens
+    t.split(' ').length > 10   // More words
+  );
+}
+
+function createSuccessResponse(title, quality = {}) {
+  // Only include quality info if we have valid data
+  const qualityResponse = {};
+  
+  if (quality.bitrate) {
+    qualityResponse.bitrate = quality.bitrate;
   }
   
-  return null;
-}
+  if (quality.contentType) {
+    qualityResponse.format = getFormatFromContentType(quality.contentType);
+  }
+  
+  if (quality.metaInterval) {
+    qualityResponse.metaInt = quality.metaInterval;
+  }
+  
+  if (quality.responseTime) {
+    qualityResponse.responseTime = quality.responseTime;
+  }
 
-// Placeholder for OGG metadata parser
-async function parseOggMetadata(response) {
-  // In a real implementation, this would parse OGG headers
-  return null;
-}
-
-// Placeholder for MP3 metadata parser
-async function parseMp3Metadata(response) {
-  // In a real implementation, this would parse ID3 tags
-  return null;
-}
-
-// Improved response helpers
-function createSuccessResponse(title, quality = {}) {
-  const response = {
+  return new Response(JSON.stringify({
     success: true,
     title: title ? cleanTitle(title) : null,
     isStationName: title ? isLikelyStationName(title) : true,
-    quality: quality.bitrate || quality.format || quality.metaInterval
-      ? {
-          bitrate: quality.bitrate,
-          format: getFormatFromContentType(quality.contentType),
-          metaInt: quality.metaInterval,
-          responseTime: quality.responseTime
-        } 
-      : null
-  };
-
-  return new Response(JSON.stringify(response), {
+    quality: Object.keys(qualityResponse).length > 0 ? qualityResponse : null
+  }), {
     headers: { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'no-cache, max-age=3', // Reduced cache for more frequent updates
-      'Expires': new Date(Date.now() + 3000).toUTCString() // 3 second expiration
+      'Cache-Control': 'public, max-age=5' // Reduced cache time
     }
   });
 }
@@ -278,7 +358,6 @@ function createErrorResponse(message, status = 500, quality = {}) {
   });
 }
 
-// Helper functions (unchanged but included for completeness)
 function cleanTitle(title) {
   if (!title) return '';
   return title
@@ -287,6 +366,7 @@ function cleanTitle(title) {
     .replace(/^\s+|\s+$/g, '') // Trim whitespace
     .replace(/\|.*$/, '') // Remove everything after pipe
     .replace(/\s+/g, ' ') // Collapse multiple spaces
+    .replace(/\x00/g, '') // Remove null bytes
     .trim();
 }
 
@@ -296,18 +376,6 @@ function getFormatFromContentType(contentType) {
   if (contentType.includes('mpeg')) return 'MP3';
   if (contentType.includes('aac')) return 'AAC';
   if (contentType.includes('wav')) return 'WAV';
+  if (contentType.includes('flac')) return 'FLAC';
   return contentType.split(';')[0].split('/')[1] || 'Unknown';
-}
-
-function isLikelyStationName(text) {
-  if (!text) return true;
-  const t = text.toLowerCase();
-  return (
-    t.includes('radio') ||
-    t.includes('fm') ||
-    t.includes('station') ||
-    t.length > 40 ||  // Very long text is probably not a song title
-    t.split('-').length > 3 ||  // Too many hyphens
-    t.split(' ').length > 8  // Too many words
-  );
 }
