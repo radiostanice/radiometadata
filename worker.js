@@ -21,6 +21,11 @@ export default {
     }
 
     try {
+      // Special handling for Naxi Radio stations
+      if (isNaxiStation(stationUrl)) {
+        return await handleNaxiRadio(stationUrl);
+      }
+
       // Configuration for fetching the stream
       const fetchOptions = {
         method: 'GET',
@@ -29,6 +34,10 @@ export default {
           'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)',
           'Accept-Charset': 'utf-8'
         },
+        cf: { 
+          cacheTtl: 5,
+          cacheEverything: true
+        }
       };
 
       // Start timing the request
@@ -86,6 +95,148 @@ export default {
         500
       );
     }
+  }
+}
+
+// Handle Naxi radio stations
+async function handleNaxiRadio(stationUrl) {
+  // Map station URLs to their webpage paths
+  const stationNameMap = {
+    'naxi128.streaming.rs:9152': 'radio',
+    'naxidigital-hype128ssl.streaming.rs:8272': 'hype',
+    'naxidigital-rock128ssl.streaming.rs:8182': 'rock',
+    'naxidigital-exyu128ssl.streaming.rs:8242': 'ex-yu',
+    'naxidigital-exyurock128ssl.streaming.rs:8402': 'ex-yu-rock',
+    'naxidigital-70s128ssl.streaming.rs:8382': '70-te',
+    'naxidigital-80s128ssl.streaming.rs:8042': '80-te',
+    'naxidigital-90s128ssl.streaming.rs:8282': '90-te',
+    'naxidigital-cafe128ssl.streaming.rs:8022': 'cafe',
+    'naxidigital-classic128ssl.streaming.rs:8032': 'classic',
+    'naxidigital-jazz128ssl.streaming.rs:8172': 'jazz',
+    'naxidigital-chill128ssl.streaming.rs:8412': 'chill',
+    'naxidigital-house128ssl.streaming.rs:8002': 'house',
+    'naxidigital-lounge128ssl.streaming.rs:8252': 'lounge',
+    'naxidigital-chillwave128ssl.streaming.rs:8322': 'chillwave',
+    'naxidigital-instrumental128.streaming.rs:8432': 'instrumental',
+    'naxidigital-reggae128.streaming.rs:8422': 'reggae',
+    'naxidigital-rnb128ssl.streaming.rs:8122': 'rnb',
+    'naxidigital-mix128ssl.streaming.rs:8222': 'mix',
+    'naxidigital-gold128ssl.streaming.rs:8062': 'gold',
+    'naxidigital-blues128ssl.streaming.rs:8312': 'blues-rock',
+    'naxidigital-evergreen128ssl.streaming.rs:8012': 'evergreen',
+    'naxidigital-funk128ssl.streaming.rs:8362': 'funk',
+    'naxidigital-dance128ssl.streaming.rs:8112': 'dance',
+    'naxidigital-disco128ssl.streaming.rs:8352': 'disco',
+    'naxidigital-clubbing128ssl.streaming.rs:8092': 'clubbing',
+    'naxidigital-fresh128ssl.streaming.rs:8212': 'fresh',
+    'naxidigital-latino128ssl.streaming.rs:8232': 'latino',
+    'naxidigital-love128ssl.streaming.rs:8102': 'love',
+    'naxidigital-boem128ssl.streaming.rs:8162': 'boem',
+    'naxidigital-adore128ssl.streaming.rs:8332': 'adore',
+    'naxidigital-slager128ssl.streaming.rs:8372': 'slager',
+    'naxidigital-millennium128ssl.streaming.rs:8342': 'millenium',
+    'naxidigital-fitness128ssl.streaming.rs:8292': 'fitness',
+    'naxidigital-kids128ssl.streaming.rs:8052': 'kids',
+    'naxidigital-xmas128.streaming.rs:8392': 'xmas'
+  };
+
+  // Extract station key from URL
+  const cleanUrl = stationUrl
+    .replace('https://', '')
+    .replace('http://', '')
+    .replace(';stream.nsv', '')
+    .replace(';*.mp3', '')
+    .split('/')[0];
+
+  // Get the station name for web scraping
+  const stationName = stationNameMap[cleanUrl] || cleanUrl;
+  
+  // Naxi API endpoint for current track info
+  const apiUrl = `https://www.naxi.rs/stations/rs-${stationName}.json?_=${Date.now()}`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      },
+      cf: {
+        cacheTtl: 10
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Naxi API: ${response.status}`);
+    }
+
+    const data = await response.text();
+    const nowPlaying = extractNaxiNowPlaying(data);
+    
+    // Check if the response contains valid song info
+    if (nowPlaying && !isLikelyStationName(nowPlaying)) {
+      return createSuccessResponse(nowPlaying, {
+        source: 'naxi-web',
+        bitrate: '128',
+        format: 'MP3',
+        responseTime: qualityInfo ? qualityInfo.responseTime : null
+      });
+    }
+
+    // Fall back to traditional methods if web scraping fails
+    return createErrorResponse('Naxi: No metadata found', 404);
+    
+  } catch (error) {
+    console.error('Error fetching Naxi metadata:', error);
+    return createErrorResponse(`Naxi: ${error.message}`, 500);
+  }
+}
+
+// Extract currently playing song from Naxi HTML
+function extractNaxiNowPlaying(html) {
+  try {
+    // Try parsing as JSON first (for API responses)
+    try {
+      const jsonData = JSON.parse(html);
+      if (typeof jsonData === 'string') {
+        // Sometimes the response is JSON but contains HTML as a string
+        return extractFromHtml(jsonData);
+      }
+    } catch (e) {
+      // Not JSON, parse as HTML
+      return extractFromHtml(html);
+    }
+
+    function extractFromHtml(htmlString) {
+      // First pattern - look for "Slušate:" pattern
+      const onAirPattern = /Slušate:[\s\S]*?<b>([^<]+)<\/b>\s*-?\s*<b>([^<]+)<\/b>/;
+      const onAirMatch = htmlString.match(onAirPattern);
+      if (onAirMatch && onAirMatch[1] && onAirMatch[2]) {
+        const artist = onAirMatch[1].trim();
+        const title = onAirMatch[2].trim();
+        return `${artist} - ${title}`;
+      }
+
+      // Second pattern - look for simple list items
+      const listItemPattern = /<li><b>([^<]+)<\/b>\s*-\s*([^<]+)<\/li>/;
+      const listItemMatch = htmlString.match(listItemPattern);
+      if (listItemMatch && listItemMatch[1] && listItemMatch[2]) {
+        const artist = listItemMatch[1].trim();
+        const title = listItemMatch[2].trim();
+        return `${artist} - ${title}`;
+      }
+
+      // Third pattern - look for messy content
+      const messyPattern = /Slušate:[\s\S]*?<\/i>([^<]+)/;
+      const messyMatch = htmlString.match(messyPattern);
+      if (messyMatch && messyMatch[1]) {
+        const match = messyMatch[1].trim();
+        return match.includes(' - ') ? match : null;
+      }
+
+      return null;
+    }
+  } catch (e) {
+    console.error('Naxi parsing error:', e);
+    return null;
   }
 }
 
