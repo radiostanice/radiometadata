@@ -102,14 +102,14 @@ export default {
 async function handleNaxiRadio(stationUrl) {
   // Map station URLs to their webpage paths
   const stationNameMap = {
-    'naxi128.streaming.rs:9152': 'radio',
+    'naxi128.streaming.rs:9152': 'naxi',
     'naxidigital-hype128ssl.streaming.rs:8272': 'hype',
     'naxidigital-rock128ssl.streaming.rs:8182': 'rock',
-    'naxidigital-exyu128ssl.streaming.rs:8242': 'ex-yu',
-    'naxidigital-exyurock128ssl.streaming.rs:8402': 'ex-yu-rock',
-    'naxidigital-70s128ssl.streaming.rs:8382': '70-te',
-    'naxidigital-80s128ssl.streaming.rs:8042': '80-te',
-    'naxidigital-90s128ssl.streaming.rs:8282': '90-te',
+    'naxidigital-exyu128ssl.streaming.rs:8242': 'exyu',
+    'naxidigital-exyurock128ssl.streaming.rs:8402': 'exyurock',
+    'naxidigital-70s128ssl.streaming.rs:8382': '70e',
+    'naxidigital-80s128ssl.streaming.rs:8042': '80e',
+    'naxidigital-90s128ssl.streaming.rs:8282': '90e',
     'naxidigital-cafe128ssl.streaming.rs:8022': 'cafe',
     'naxidigital-classic128ssl.streaming.rs:8032': 'classic',
     'naxidigital-jazz128ssl.streaming.rs:8172': 'jazz',
@@ -134,7 +134,7 @@ async function handleNaxiRadio(stationUrl) {
     'naxidigital-boem128ssl.streaming.rs:8162': 'boem',
     'naxidigital-adore128ssl.streaming.rs:8332': 'adore',
     'naxidigital-slager128ssl.streaming.rs:8372': 'slager',
-    'naxidigital-millennium128ssl.streaming.rs:8342': 'millenium',
+    'naxidigital-millennium128ssl.streaming.rs:8342': 'millennium',
     'naxidigital-fitness128ssl.streaming.rs:8292': 'fitness',
     'naxidigital-kids128ssl.streaming.rs:8052': 'kids',
     'naxidigital-xmas128.streaming.rs:8392': 'xmas'
