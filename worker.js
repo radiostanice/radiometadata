@@ -208,19 +208,20 @@ async function tryNaxiApi(url) {
     if (contentType && contentType.includes('application/json')) {
       const data = await response.json();
       
-      // Handle different response formats
-      if (data.title || data.artist) {
-        // Standard format: {title: "", artist: ""}
+      // Handle the HTML response format with "rs" field
+      if (data.rs && typeof data.rs === 'string') {
+        return extractNaxiNowPlaying(data.rs);
+      }
+      // Other JSON formats you already handle
+      else if (data.title || data.artist) {
         return `${data.artist || 'Unknown'} - ${data.title || 'Unknown'}`;
       } else if (data.current_track) {
-        // Alternative format: {current_track: "Artist - Title"}
         return data.current_track;
       } else if (typeof data === 'string') {
-        // Sometimes the response is just a string
         return data.includes(' - ') ? data : null;
       }
     } else if (contentType && contentType.includes('text/xml')) {
-      // Handle XML response
+      // Handle XML response (unchanged)
       const text = await response.text();
       const xmlMatch = text.match(/<artist>([^<]+)<\/artist>.*?<title>([^<]+)<\/title>/is);
       if (xmlMatch && xmlMatch[1] && xmlMatch[2]) {
@@ -301,7 +302,16 @@ function extractNaxiNowPlaying(html) {
     }
 
     function extractFromHtml(htmlString) {
-      // First pattern - look for "Slušate:" pattern
+      // New pattern for the structure shown in your example
+      const naxiPattern = /Slušate:[\s\S]*?<span>([^<]+)<\/span>\s*-\s*([^<]+)/;
+      const match = htmlString.match(naxiPattern);
+      if (match && match[1] && match[2]) {
+        const artist = match[1].trim();
+        const title = match[2].trim();
+        return `${artist} - ${title}`;
+      }
+
+      // Keep your existing patterns as fallbacks
       const onAirPattern = /Slušate:[\s\S]*?<b>([^<]+)<\/b>\s*-?\s*<b>([^<]+)<\/b>/;
       const onAirMatch = htmlString.match(onAirPattern);
       if (onAirMatch && onAirMatch[1] && onAirMatch[2]) {
@@ -310,7 +320,6 @@ function extractNaxiNowPlaying(html) {
         return `${artist} - ${title}`;
       }
 
-      // Second pattern - look for simple list items
       const listItemPattern = /<li><b>([^<]+)<\/b>\s*-\s*([^<]+)<\/li>/;
       const listItemMatch = htmlString.match(listItemPattern);
       if (listItemMatch && listItemMatch[1] && listItemMatch[2]) {
@@ -319,7 +328,6 @@ function extractNaxiNowPlaying(html) {
         return `${artist} - ${title}`;
       }
 
-      // Third pattern - look for messy content
       const messyPattern = /Slušate:[\s\S]*?<\/i>([^<]+)/;
       const messyMatch = htmlString.match(messyPattern);
       if (messyMatch && messyMatch[1]) {
