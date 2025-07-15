@@ -177,7 +177,7 @@ async function handleNaxiRadio(stationUrl) {
         source: 'naxi-web',
         bitrate: '128',
         format: 'MP3',
-        responseTime: qualityInfo ? qualityInfo.responseTime : null
+        responseTime: 0
       });
     }
 
@@ -188,6 +188,56 @@ async function handleNaxiRadio(stationUrl) {
     console.error('Error fetching Naxi metadata:', error);
     return createErrorResponse(`Naxi: ${error.message}`, 500);
   }
+}
+
+function isNaxiStation(stationUrl) {
+    const naxiDomains = [
+        'naxi128.streaming.rs',
+        'naxidigital-hype128ssl.streaming.rs',
+        'naxidigital-rock128ssl.streaming.rs', 
+        'naxidigital-exyu128ssl.streaming.rs',
+        'naxidigital-exyurock128ssl.streaming.rs',
+        'naxidigital-70s128ssl.streaming.rs',
+        'naxidigital-80s128ssl.streaming.rs',
+        'naxidigital-90s128ssl.streaming.rs',
+        'naxidigital-cafe128ssl.streaming.rs',
+        'naxidigital-classic128ssl.streaming.rs',
+        'naxidigital-jazz128ssl.streaming.rs',
+        'naxidigital-chill128ssl.streaming.rs',
+        'naxidigital-house128ssl.streaming.rs',
+        'naxidigital-lounge128ssl.streaming.rs',
+        'naxidigital-chillwave128ssl.streaming.rs',
+        'naxidigital-instrumental128.streaming.rs',
+        'naxidigital-reggae128.streaming.rs',
+        'naxidigital-rnb128ssl.streaming.rs',
+        'naxidigital-mix128ssl.streaming.rs',
+        'naxidigital-gold128ssl.streaming.rs',
+        'naxidigital-blues128ssl.streaming.rs',
+        'naxidigital-evergreen128ssl.streaming.rs',
+        'naxidigital-funk128ssl.streaming.rs',
+        'naxidigital-dance128ssl.streaming.rs',
+        'naxidigital-disco128ssl.streaming.rs',
+        'naxidigital-clubbing128ssl.streaming.rs',
+        'naxidigital-fresh128ssl.streaming.rs',
+        'naxidigital-latino128ssl.streaming.rs',
+        'naxidigital-love128ssl.streaming.rs',
+        'naxidigital-boem128ssl.streaming.rs',
+        'naxidigital-adore128ssl.streaming.rs',
+        'naxidigital-slager128ssl.streaming.rs',
+        'naxidigital-millennium128ssl.streaming.rs',
+        'naxidigital-fitness128ssl.streaming.rs',
+        'naxidigital-kids128ssl.streaming.rs',
+        'naxidigital-xmas128.streaming.rs'
+    ];
+    
+    const cleanUrl = stationUrl
+        .replace('https://', '')
+        .replace('http://', '')
+        .replace(';stream.nsv', '')
+        .replace(';*.mp3', '')
+        .split('/')[0];
+        
+    return naxiDomains.some(domain => cleanUrl.includes(domain));
 }
 
 // Extract currently playing song from Naxi HTML
