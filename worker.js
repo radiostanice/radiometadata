@@ -1,3 +1,12 @@
+// Station Handlers Registry
+const STATION_HANDLERS = {
+  'naxi': handleNaxiRadio,
+  'radioparadise': handleRadioParadise,
+  'radio-s': handleRadioS, // New handler
+  // Add more handlers here
+  'default': handleDefaultStation
+};
+
 export default {
   async fetch(request, env) {
     // Handle CORS preflight requests
@@ -21,72 +30,9 @@ export default {
     }
 
     try {
-      // Special handling for Naxi Radio stations
-      if (isNaxiStation(stationUrl)) {
-        return await handleNaxiRadio(stationUrl);
-      }
-
-      // Configuration for fetching the stream
-      const fetchOptions = {
-        method: 'GET',
-        headers: { 
-          'Icy-MetaData': '1',
-          'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)',
-          'Accept-Charset': 'utf-8'
-        },
-        cf: { 
-          cacheTtl: 5,
-          cacheEverything: true
-        }
-      };
-
-      // Start timing the request
-      const startTime = Date.now();
-      
-      // Fetch with timeout (3 seconds)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      fetchOptions.signal = controller.signal;
-
-      const response = await fetch(stationUrl, fetchOptions);
-      clearTimeout(timeoutId);
-
-      // Collect quality information
-      const qualityInfo = {
-        bitrate: response.headers.get('icy-br') || null,
-        metaInterval: response.headers.get('icy-metaint'),
-        contentType: response.headers.get('content-type'),
-        server: response.headers.get('server'),
-        responseTime: Date.now() - startTime,
-        icyHeadersPresent: response.headers.get('icy-metaint') !== null
-      };
-
-      // Special handling for known radio services
-      if (stationUrl.includes('radioparadise.com')) {
-        return handleRadioParadise(qualityInfo, stationUrl);
-      }
-
-      // Check if we have ICY headers for metadata
-      const icyTitle = response.headers.get('icy-title');
-      if (icyTitle && !isLikelyStationName(icyTitle)) {
-        return createSuccessResponse(icyTitle, qualityInfo);
-      }
-
-      // Parse metadata from stream if meta interval exists
-      const metaInt = parseInt(response.headers.get('icy-metaint'));
-      if (metaInt) {
-        // Start monitoring for metadata changes
-        const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
-        if (currentMetadata) {
-          return createSuccessResponse(currentMetadata, qualityInfo);
-        }
-      }
-
-      // If no metadata found, try alternative methods
-      const metadata = await tryAlternativeMethods(response, qualityInfo);
-      
-      // Return quality info with metadata (or empty metadata if none found)
-      return createSuccessResponse(metadata, qualityInfo);
+      // Determine which handler to use
+      const handler = selectHandler(stationUrl);
+      return await handler(stationUrl);
 
     } catch (error) {
       console.error('Metadata fetch error:', error);
@@ -98,6 +44,160 @@ export default {
   }
 }
 
+// Handler Selection Logic
+function selectHandler(stationUrl) {
+  const cleanUrl = normalizeUrlForComparison(stationUrl);
+  
+  if (isNaxiStation(cleanUrl)) {
+    return STATION_HANDLERS.naxi;
+  }
+  
+  if (cleanUrl.includes('radioparadise.com')) {
+    return STATION_HANDLERS.radioparadise;
+  }
+  
+  if (cleanUrl.includes('radio-s')) { // Add your pattern for Radio S
+    return STATION_HANDLERS['radio-s'];
+  }
+  
+  return STATION_HANDLERS.default;
+}
+
+// New: Radio S Handler (example implementation)
+async function handleRadioS(stationUrl) {
+  try {
+    // First try API if available
+    const apiUrl = `https://api.radio-s.example/nowplaying`; // Replace with actual API
+    const apiResponse = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json'
+      },
+      cf: { cacheTtl: 10 }
+    });
+
+    if (apiResponse.ok) {
+      const data = await apiResponse.json();
+      if (data.song && data.artist) {
+        return createSuccessResponse(`${data.artist} - ${data.song}`, {
+          source: 'radio-s-api',
+          responseTime: 0
+        });
+      }
+    }
+
+    // If API fails, try web scraping
+    const websiteUrl = `https://www.radio-s.example`; // Replace with actual URL
+    const htmlResponse = await fetch(websiteUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      },
+      cf: { cacheTtl: 10 }
+    });
+
+    if (htmlResponse.ok) {
+      const html = await htmlResponse.text();
+      const nowPlaying = extractRadioSNowPlaying(html);
+      if (nowPlaying) {
+        return createSuccessResponse(nowPlaying, {
+          source: 'radio-s-web',
+          responseTime: 0
+        });
+      }
+    }
+
+    // Fall back to conventional methods
+    return handleDefaultStation(stationUrl);
+
+  } catch (error) {
+    console.error('Radio-S handler error:', error);
+    return handleDefaultStation(stationUrl);
+  }
+}
+
+function extractRadioSNowPlaying(html) {
+  // Implement your parsing logic for Radio S
+  // Example patterns - adjust based on actual website structure
+  const patterns = [
+    /<div class="now-playing">(.*?) - (.*?)<\/div>/,
+    /"title":"([^"]+)","artist":"([^"]+)"/,
+    /Current track: (.*?) - (.*?)(?:<\/div>|$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match && match[1] && match[2]) {
+      return `${match[1].trim()} - ${match[2].trim()}`;
+    }
+  }
+
+  return null;
+}
+
+// Default station handler (unchanged but moved)
+async function handleDefaultStation(stationUrl) {
+  const fetchOptions = {
+    method: 'GET',
+    headers: { 
+      'Icy-MetaData': '1',
+      'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)',
+      'Accept-Charset': 'utf-8'
+    },
+    cf: { 
+      cacheTtl: 5,
+      cacheEverything: true
+    }
+  };
+
+  const startTime = Date.now();
+  
+  // Fetch with timeout (3 seconds)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  fetchOptions.signal = controller.signal;
+
+  const response = await fetch(stationUrl, fetchOptions);
+  clearTimeout(timeoutId);
+
+  const qualityInfo = {
+    bitrate: response.headers.get('icy-br') || null,
+    metaInterval: response.headers.get('icy-metaint'),
+    contentType: response.headers.get('content-type'),
+    server: response.headers.get('server'),
+    responseTime: Date.now() - startTime,
+    icyHeadersPresent: response.headers.get('icy-metaint') !== null
+  };
+
+  // Check if we have ICY headers for metadata
+  const icyTitle = response.headers.get('icy-title');
+  if (icyTitle && !isLikelyStationName(icyTitle)) {
+    return createSuccessResponse(icyTitle, qualityInfo);
+  }
+
+  // Parse metadata from stream if meta interval exists
+  const metaInt = parseInt(response.headers.get('icy-metaint'));
+  if (metaInt) {
+    const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
+    if (currentMetadata) {
+      return createSuccessResponse(currentMetadata, qualityInfo);
+    }
+  }
+
+  // If no metadata found, try alternative methods
+  const metadata = await tryAlternativeMethods(response, qualityInfo);
+  
+  return createSuccessResponse(metadata, qualityInfo);
+}
+
+// Helper function for URL normalization
+function normalizeUrlForComparison(url) {
+  return url
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(';stream.nsv', '')
+    .replace(';*.mp3', '')
+    .toLowerCase();
+}
 // Handle Naxi radio stations
 async function handleNaxiRadio(stationUrl) {
   // Map station URLs to their webpage paths
