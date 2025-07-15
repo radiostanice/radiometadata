@@ -70,8 +70,6 @@ async function handlePlayRadio(stationUrl) {
       throw new Error('Could not identify Play Radio stream');
     }
     
-    const streamName = streamMatch[1]; // e.g. "play", "rock", "party", etc.
-    
     // Prepare form data for the API request
     const formData = new FormData();
     formData.append('artist', '');
@@ -97,7 +95,7 @@ async function handlePlayRadio(stationUrl) {
         'Referer': 'https://playradio.rs/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       },
-      cf: { cacheTtl: 5 }
+      cf: { cacheTtl: 3 } // Reduced cache time for freshness
     });
     
     if (!response.ok) {
@@ -106,43 +104,73 @@ async function handlePlayRadio(stationUrl) {
     
     const data = await response.json();
     
-    // First try to get direct artist and title from the response
-    if (data.artist && data.title) {
-      return createSuccessResponse(`${data.artist} - ${data.title}`, {
-        source: 'play-radio-api',
+    // Debug: Log raw response for troubleshooting
+    console.log('Play Radio API Response:', data);
+    
+    // Parse the scroll text first (it often contains the current song)
+    if (data.scroll) {
+      const scrollMatch = data.scroll.match(/data-marquee="([^"]+)"/);
+      if (scrollMatch && scrollMatch[1]) {
+        const [artist, title] = scrollMatch[1].split(' - ');
+        if (artist && title && artist !== 'undefined' && title !== 'undefined') {
+          return createSuccessResponse(scrollMatch[1].trim(), {
+            source: 'play-radio-scroll',
+            responseTime: 0
+          });
+        }
+      }
+    }
+    
+    // If scroll parsing fails, try last_five_list_right
+    if (data.last_five_list_right) {
+      const listItems = data.last_five_list_right.split('</div><div class="five_item_right">');
+      if (listItems.length > 0) {
+        const firstItem = listItems[0];
+        const artistMatch = firstItem.match(/<span class="five_artist">([^<]+)<\/span>/);
+        const titleMatch = firstItem.match(/<span class="five_song">([^<]+)<\/span>/);
+        
+        if (artistMatch && titleMatch) {
+          return createSuccessResponse(`${artistMatch[1].trim()} - ${titleMatch[1].trim()}`, {
+            source: 'play-radio-last-five-right',
+            responseTime: 0
+          });
+        }
+      }
+    }
+    
+    // If that fails, try last_five_list
+    if (data.last_five_list) {
+      const listItems = data.last_five_list.split('</div><div class="d-flex flex-row gap-1">');
+      if (listItems.length > 0) {
+        const firstItem = listItems[0];
+        const artistMatch = firstItem.match(/<span class="lp-title">([^<]+)<\/span>/);
+        const titleMatch = firstItem.match(/<span class="text-uppercase">([^<]+)<\/span>/);
+        
+        if (artistMatch && titleMatch) {
+          return createSuccessResponse(`${artistMatch[1].trim()} - ${titleMatch[1].trim()}`, {
+            source: 'play-radio-last-five',
+            responseTime: 0
+          });
+        }
+      }
+    }
+    
+    // As a last resort, try the raw artist/title fields
+    if (data.artist || data.title) {
+      const artist = data.artist ? data.artist.replace(/\+/g, ' ') : 'Unknown';
+      const title = data.title ? data.title.replace(/\+/g, ' ') : 'Unknown';
+      return createSuccessResponse(`${artist} - ${title}`, {
+        source: 'play-radio-raw-fields',
         responseTime: 0
       });
     }
     
-    // Check for last_five_list HTML content
-    if (data.last_five_list) {
-      // Try to parse the first song from last_five_list
-      const firstSongMatch = data.last_five_list.match(/<span class="lp-title">([^<]+)<\/span><br>\s*<span class="text-uppercase">([^<]+)<\/span>/);
-      if (firstSongMatch && firstSongMatch[1] && firstSongMatch[2]) {
-        return createSuccessResponse(`${firstSongMatch[1].trim()} - ${firstSongMatch[2].trim()}`, {
-          source: 'play-radio-api',
-          responseTime: 0
-        });
-      }
-    }
-    
-    // Check for last_five_list_right HTML content
-    if (data.last_five_list_right) {
-      // Try to parse the first song from last_five_list_right
-      const firstSongMatch = data.last_five_list_right.match(/<span class="five_artist">([^<]+)<\/span><br>\s*<span class="five_song">([^<]+)<\/span>/);
-      if (firstSongMatch && firstSongMatch[1] && firstSongMatch[2]) {
-        return createSuccessResponse(`${firstSongMatch[1].trim()} - ${firstSongMatch[2].trim()}`, {
-          source: 'play-radio-api',
-          responseTime: 0
-        });
-      }
-    }
-    
-    // Fall back to traditional methods if API fails
+    // Fall back to default handler if nothing else works
     return handleDefaultStation(stationUrl);
     
   } catch (error) {
     console.error('Play Radio handler error:', error);
+    // Try the default handler before giving up
     return handleDefaultStation(stationUrl);
   }
 }
