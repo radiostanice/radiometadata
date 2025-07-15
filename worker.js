@@ -20,20 +20,16 @@ export default {
       return createErrorResponse('Missing station URL parameter', 400);
     }
 
-    try {
-      // Use a faster timeout for initial connection
-      const fastTimeout = 3000;
-      const slowTimeout = 10000;
-      
-      // Configuration for different stream types
-      const fetchOptions = {
-        method: 'GET',
-        headers: { 
-          'Icy-MetaData': '1',
-          'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/3.0)',
-          'Accept': 'audio/*'
-        }
-      };
+// Replace your complex fetch logic with this simpler version
+try {
+  const response = await fetch(stationUrl, {
+    method: 'GET',
+    headers: { 
+      'Icy-MetaData': '1',
+      'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/2.0)'
+    },
+    signal: AbortSignal.timeout(5000), // Simplified timeout
+  });
 
       // Start timing the request
       const startTime = Date.now();
@@ -154,73 +150,44 @@ async function handleRadioParadise(qualityInfo, stationUrl) {
 
 // Optimized metadata extraction pipeline
 async function tryAllMetadataMethods(response, qualityInfo) {
-  // Early exit if we can determine the format first
-  const contentType = qualityInfo.contentType || '';
-  
-  // 1. Check ICY headers first (most common)
+  // 1. Check ICY headers first (most common) - keep it simple
   const icyTitle = response.headers.get('icy-title');
   if (icyTitle && !isLikelyStationName(icyTitle)) {
     return cleanTitle(icyTitle);
   }
 
-  // 2. For OGG streams, parse directly
-  if (contentType.includes('ogg')) {
-    const oggMetadata = await parseOggMetadata(response.clone());
-    if (oggMetadata) return oggMetadata;
-  }
-
-  // 3. Parse metadata from stream if meta interval exists
+  // 2. Parse metadata from stream if meta interval exists
   const metaInt = parseInt(response.headers.get('icy-metaint'));
   if (metaInt) {
-    const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
-    if (streamMetadata) return streamMetadata;
+    return await parseMetadataFromStream(response.clone(), metaInt);
   }
 
-  // 4. Try parsing MP3 streams (ID3 tags)
-  if (contentType.includes('mpeg')) {
-    const mp3Metadata = await parseMp3Metadata(response.clone());
-    if (mp3Metadata) return mp3Metadata;
-  }
-
+  // For other formats, return null (keep it simple for now)
   return null;
 }
 
 // Faster metadata stream parser with timeout
 async function parseMetadataFromStream(response, metaInt) {
-  const METADATA_TIMEOUT = 2000; // Shorter timeout for faster detection
-  const MAX_BYTES_TO_READ = metaInt * 2; // Only read up to 2 metadata blocks
+  const METADATA_TIMEOUT = 5000;
+  const READ_SIZE = metaInt + 256; // Read first metadata block plus some buffer
 
   try {
     const reader = response.body.getReader();
-    let buffer = new Uint8Array();
-    let bytesRead = 0;
-    
-    // Set a timeout for metadata reading
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Metadata read timeout')), METADATA_TIMEOUT)
-    );
+    const { value } = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), METADATA_TIMEOUT)
+      )
+    ]);
 
-    const metadataPromise = (async () => {
-      while (bytesRead < MAX_BYTES_TO_READ) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        bytesRead += value.length;
-        const newBuffer = new Uint8Array(buffer.length + value.length);
-        newBuffer.set(buffer);
-        newBuffer.set(value, buffer.length);
-        buffer = newBuffer;
+    if (!value) return null;
 
-        // Check buffer incrementally as we read
-        const metadata = findMetadataInBuffer(buffer, metaInt);
-        if (metadata) {
-          return metadata;
-        }
-      }
-      return null;
-    })();
-
-    return await Promise.race([metadataPromise, timeoutPromise]);
+    // Simple metadata extraction (like in your working version)
+    const str = new TextDecoder().decode(value);
+    const titleMatch = str.match(/StreamTitle=['"]([^'"]*)['"]/);
+    return titleMatch?.[1] && !isLikelyStationName(titleMatch[1]) 
+      ? cleanTitle(titleMatch[1]) 
+      : null;
   } catch (e) {
     console.log('Metadata stream parsing error:', e);
     return null;
