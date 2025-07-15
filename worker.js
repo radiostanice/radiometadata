@@ -26,7 +26,8 @@ export default {
         method: 'GET',
         headers: { 
           'Icy-MetaData': '1',
-          'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)'
+          'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)',
+          'Accept-Charset': 'utf-8'
         },
         cf: { 
           cacheTtl: 5,
@@ -37,7 +38,7 @@ export default {
       // Start timing the request
       const startTime = Date.now();
       
-      // Fetch with timeout (reduced to 3 seconds)
+      // Fetch with timeout (3 seconds)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
       fetchOptions.signal = controller.signal;
@@ -69,9 +70,10 @@ export default {
       // Parse metadata from stream if meta interval exists
       const metaInt = parseInt(response.headers.get('icy-metaint'));
       if (metaInt) {
-        const streamMetadata = await parseMetadataFromStream(response.clone(), metaInt);
-        if (streamMetadata) {
-          return createSuccessResponse(streamMetadata, qualityInfo);
+        // Start monitoring for metadata changes
+        const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
+        if (currentMetadata) {
+          return createSuccessResponse(currentMetadata, qualityInfo);
         }
       }
 
@@ -89,6 +91,115 @@ export default {
       );
     }
   }
+}
+
+// Enhanced metadata monitoring with better character encoding support
+async function streamMetadataMonitor(response, metaInt) {
+  try {
+    const reader = response.body.getReader();
+    let buffer = new Uint8Array(0);
+    let metadataFound = null;
+    const maxAttempts = 3; // Try up to 3 meta intervals
+    let attempts = 0;
+
+    while (attempts < maxAttempts && !metadataFound) {
+      // Read exactly one metadata interval plus potential metadata block
+      const targetBytes = metaInt + (attempts === 0 ? 0 : 1) + 255; // 255 is max metadata size (16*16-1)
+
+      while (buffer.length < targetBytes) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        // Efficient buffer appending
+        const newBuffer = new Uint8Array(buffer.length + value.length);
+        newBuffer.set(buffer);
+        newBuffer.set(value, buffer.length);
+        buffer = newBuffer;
+      }
+
+      // Extract metadata from current position
+      metadataFound = extractIcyMetadata(buffer, metaInt, attempts * metaInt);
+      attempts++;
+    }
+
+    return metadataFound;
+  } catch (e) {
+    console.error('Metadata monitoring error:', e);
+    return null;
+  }
+}
+
+// Enhanced metadata extraction with better encoding support
+function extractIcyMetadata(buffer, metaInt, offset = 0) {
+  offset = offset || (metaInt * Math.floor(buffer.length / metaInt));
+  
+  if (buffer.length < offset + 1) return null;
+  
+  const metaLength = buffer[offset] * 16;
+  if (metaLength === 0 || offset + 1 + metaLength > buffer.length) return null;
+
+  try {
+    const metadataBytes = buffer.slice(offset + 1, offset + 1 + metaLength);
+    
+    // Try multiple encodings in sequence
+    const encodings = ['utf-8', 'iso-8859-1', 'windows-1250'];
+    let metadataString = '';
+    
+    for (const encoding of encodings) {
+      try {
+        metadataString = new TextDecoder(encoding).decode(metadataBytes);
+        if (metadataString.includes('StreamTitle=')) break;
+      } catch (e) {
+        console.log(`Failed decoding with ${encoding}`);
+      }
+    }
+    
+    // Check for empty metadata
+    if (!metadataString.trim()) return null;
+    
+    // Improved metadata pattern matching
+    const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
+    if (streamTitleMatch && streamTitleMatch[1]) {
+      let title = streamTitleMatch[1].trim();
+      
+      // Fix common encoding issues for Serbian characters
+      title = fixSerbianCharacters(title);
+      
+      return title && !isLikelyStationName(title) ? title : null;
+    }
+
+    // Alternative pattern for some streams
+    const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
+    if (altMatch && altMatch[1]) {
+      let title = altMatch[1].trim();
+      title = fixSerbianCharacters(title);
+      return title && !isLikelyStationName(title) ? title : null;
+    }
+    
+    // If we have non-empty metadata but no pattern matched, return as-is
+    return fixSerbianCharacters(metadataString.trim()) || null;
+  } catch (e) {
+    console.log('Metadata parsing error:', e);
+  }
+  return null;
+}
+
+// Fix Serbian Latin character encoding issues
+function fixSerbianCharacters(text) {
+  if (!text) return text;
+  
+  // Common misencoded Serbian characters
+  const charMap = {
+    'Ä': 'Č', 'ä': 'č',
+    'Å¡': 'š', 
+    'Ä‡': 'ć', 
+    'Ä‘': 'đ',
+    'Å¾': 'ž',
+    // Add more mappings if needed
+  };
+  
+  // Replace misencoded characters
+  return text.replace(/[ÄäÅ¡Ä‡Ä‘Å¾]/g, match => charMap[match] || match);
 }
 
 async function handleRadioParadise(qualityInfo, stationUrl) {
@@ -173,73 +284,6 @@ async function parseShoutcastV1Metadata(response) {
   return null;
 }
 
-async function parseMetadataFromStream(response, metaInt) {
-  try {
-    const reader = response.body.getReader();
-    let buffer = new Uint8Array();
-    let bytesRead = 0;
-    const maxBytesToRead = metaInt * 2; // Read enough to ensure we get metadata
-
-    while (bytesRead < maxBytesToRead) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      bytesRead += value.length;
-      const newBuffer = new Uint8Array(buffer.length + value.length);
-      newBuffer.set(buffer);
-      newBuffer.set(value, buffer.length);
-      buffer = newBuffer;
-
-      if (bytesRead >= metaInt) {
-        const metadata = extractIcyMetadata(buffer, metaInt);
-        if (metadata) return metadata;
-      }
-    }
-
-    return null;
-  } catch (e) {
-    console.error('Stream metadata parsing error:', e);
-    return null;
-  }
-}
-
-function extractIcyMetadata(buffer, metaInt) {
-  const offset = metaInt * Math.floor(buffer.length / metaInt);
-  
-  if (buffer.length < offset + 1) return null;
-  
-  const metaLength = buffer[offset] * 16;
-  if (metaLength === 0 || offset + 1 + metaLength > buffer.length) return null;
-
-  try {
-    const metadataBytes = buffer.slice(offset + 1, offset + 1 + metaLength);
-    let metadataString = new TextDecoder().decode(metadataBytes);
-    
-    // Check for empty metadata
-    if (!metadataString.trim()) return null;
-    
-    // Improved metadata pattern matching
-    const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
-    if (streamTitleMatch && streamTitleMatch[1]) {
-      const title = streamTitleMatch[1].trim();
-      return title && !isLikelyStationName(title) ? title : null;
-    }
-
-    // Alternative pattern for some streams
-    const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
-    if (altMatch && altMatch[1]) {
-      const title = altMatch[1].trim();
-      return title && !isLikelyStationName(title) ? title : null;
-    }
-    
-    // If we have non-empty metadata but no pattern matched, return as-is
-    return metadataString.trim() || null;
-  } catch (e) {
-    console.log('Metadata parsing error:', e);
-  }
-  return null;
-}
-
 function isLikelyStationName(text) {
   if (!text || !text.trim()) return true;
   const t = text.toLowerCase();
@@ -249,7 +293,10 @@ function isLikelyStationName(text) {
     t.includes('station') ||
     t.length > 50 ||
     t.split('-').length > 4 ||
-    t.split(' ').length > 10
+    t.split(' ').length > 10 ||
+    t.includes('stream') ||
+    t.includes('broadcast') ||
+    t.includes('live')
   );
 }
 
