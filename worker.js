@@ -151,28 +151,25 @@ async function handleNaxiRadio(stationUrl) {
   // Get the station name for web scraping
   const stationName = stationNameMap[cleanUrl] || cleanUrl;
   
-  // Naxi API endpoint for current track info
-  const apiUrl = `https://www.naxi.rs/stations/rs-${stationName}.json?_=${Date.now()}`;
-
   try {
-    const response = await fetch(apiUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      },
-      cf: {
-        cacheTtl: 10
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch Naxi API: ${response.status}`);
+    // First try the direct API endpoint
+    const apiUrl1 = `https://www.naxi.rs/stations/rs-${stationName}.json?_=${Date.now()}`;
+    let nowPlaying = await tryNaxiApi(apiUrl1);
+    
+    if (!nowPlaying) {
+      // Fallback to alternative endpoint if first one fails
+      const apiUrl2 = `https://www.naxi.rs/proxy/${stationName}.xml?_=${Date.now()}`;
+      nowPlaying = await tryNaxiApi(apiUrl2);
+    }
+    
+    if (!nowPlaying) {
+      // Final fallback to generic nowplaying endpoint
+      const apiUrl3 = `https://nowplaying.naxi.rs/data/${stationName}.json?_=${Date.now()}`;
+      nowPlaying = await tryNaxiApi(apiUrl3);
     }
 
-    const data = await response.text();
-    const nowPlaying = extractNaxiNowPlaying(data);
-    
-    // Check if the response contains valid song info
-    if (nowPlaying && !isLikelyStationName(nowPlaying)) {
+    // Check if we got valid data
+    if (nowPlaying) {
       return createSuccessResponse(nowPlaying, {
         source: 'naxi-web',
         bitrate: '128',
@@ -187,6 +184,54 @@ async function handleNaxiRadio(stationUrl) {
   } catch (error) {
     console.error('Error fetching Naxi metadata:', error);
     return createErrorResponse(`Naxi: ${error.message}`, 500);
+  }
+}
+
+async function tryNaxiApi(url) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://www.naxi.rs/'
+      },
+      cf: {
+        cacheTtl: 10
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const data = await response.json();
+      
+      // Handle different response formats
+      if (data.title || data.artist) {
+        // Standard format: {title: "", artist: ""}
+        return `${data.artist || 'Unknown'} - ${data.title || 'Unknown'}`;
+      } else if (data.current_track) {
+        // Alternative format: {current_track: "Artist - Title"}
+        return data.current_track;
+      } else if (typeof data === 'string') {
+        // Sometimes the response is just a string
+        return data.includes(' - ') ? data : null;
+      }
+    } else if (contentType && contentType.includes('text/xml')) {
+      // Handle XML response
+      const text = await response.text();
+      const xmlMatch = text.match(/<artist>([^<]+)<\/artist>.*?<title>([^<]+)<\/title>/is);
+      if (xmlMatch && xmlMatch[1] && xmlMatch[2]) {
+        return `${xmlMatch[1].trim()} - ${xmlMatch[2].trim()}`;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Error with Naxi API (${url}):`, error);
+    return null;
   }
 }
 
