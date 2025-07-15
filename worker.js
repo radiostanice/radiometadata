@@ -64,7 +64,7 @@ function selectHandler(stationUrl) {
 
 async function handlePlayRadio(stationUrl) {
   try {
-    // Prepare the form data exactly as the API expects it
+    // Create the form data exactly as the API expects
     const formData = new URLSearchParams();
     formData.append('artist', '');
     formData.append('title', '');
@@ -73,13 +73,16 @@ async function handlePlayRadio(stationUrl) {
     formData.append('dataType', 'json');
     formData.append('stream', stationUrl);
     
-    // Add last_five array entries with empty values
+    // Add empty entries for last_five array
     for (let i = 0; i < 5; i++) {
       formData.append(`last_five[${i}][order]`, String(i+1));
       formData.append(`last_five[${i}][artist]`, '');
       formData.append(`last_five[${i}][title]`, '');
     }
-    
+
+    // Debug log the form data being sent
+    console.log('Sending form data:', formData.toString());
+
     // Make the API request with proper headers
     const apiUrl = 'https://playradio.rs/ajax/now_playing.php';
     const response = await fetch(apiUrl, {
@@ -93,56 +96,87 @@ async function handlePlayRadio(stationUrl) {
         'Origin': 'https://playradio.rs'
       }
     });
-    
-    if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
-    }
-    
+
+    // Debug log response status
+    console.log('Response status:', response.status);
+
     const data = await response.json();
     
-    // First try to parse the current song from scroll data
+    // Debug log the raw response
+    console.log('Raw API response:', JSON.stringify(data, null, 2));
+
+    // Parse the current song - first try the scroll data
     if (data.scroll) {
       const scrollMatch = data.scroll.match(/data-marquee="([^"]+)"/);
       if (scrollMatch && scrollMatch[1]) {
         const currentSong = scrollMatch[1].trim();
-        if (currentSong && currentSong !== 'undefined - undefined') {
+        if (currentSong && !currentSong.includes('undefined') && currentSong !== '-') {
+          console.log('Found in scroll data:', currentSong);
           return createSuccessResponse(currentSong, {
-            source: 'play-radio-scroll',
-            responseTime: 0
+            source: 'play-radio-scroll'
           });
         }
       }
     }
+
+    // Then try direct artist/title fields
+    const artist = data.artist ? decodeURIComponent(data.artist.replace(/\+/g, ' ')).trim() : '';
+    const title = data.title ? decodeURIComponent(data.title.replace(/\+/g, ' ')).trim() : '';
     
-    // If no scroll data or unsuccessful, try the artist/title fields
-    if (data.artist || data.title) {
-      const artist = data.artist ? decodeURIComponent(data.artist.replace(/\+/g, ' ')) : 'Unknown';
-      const title = data.title ? decodeURIComponent(data.title.replace(/\+/g, ' ')) : 'Unknown';
+    if (artist && title) {
       const currentTrack = `${artist} - ${title}`;
-      
-      if (currentTrack !== 'Unknown - Unknown') {
-        return createSuccessResponse(currentTrack, {
-          source: 'play-radio-direct-fields',
-          responseTime: 0
-        });
+      console.log('Found in artist/title fields:', currentTrack);
+      return createSuccessResponse(currentTrack, {
+        source: 'play-radio-direct-fields'
+      });
+    } else if (artist || title) {
+      // If we have just one of them, return what we have
+      const partialTrack = artist || title;
+      console.log('Found partial track info:', partialTrack);
+      return createSuccessResponse(partialTrack, {
+        source: 'play-radio-partial-fields'
+      });
+    }
+
+    // Then check last played songs
+    if (data.last_five_list) {
+      // First try last_five_list (main format)
+      const listItems = data.last_five_list.match(/<div class="lp-informations">[\s\S]*?<span class="lp-title">([^<]+)<\/span>[\s\S]*?<span class="text-uppercase">([^<]+)/g);
+      if (listItems && listItems[0]) {
+        const firstItem = listItems[0];
+        const artistMatch = firstItem.match(/lp-title">([^<]+)/);
+        const titleMatch = firstItem.match(/text-uppercase">([^<]+)/);
+        
+        if (artistMatch && titleMatch) {
+          const currentTrack = `${artistMatch[1].trim()} - ${titleMatch[1].trim()}`;
+          console.log('Found in last_five_list:', currentTrack);
+          return createSuccessResponse(currentTrack, {
+            source: 'play-radio-last-played'
+          });
+        }
+      }
+
+      // Then try last_five_list_right (alternate format)
+      const rightItems = data.last_five_list_right.match(/<span class="five_artist">([^<]+)<\/span>[\s\S]*?<span class="five_song">([^<]+)/g);
+      if (rightItems && rightItems[0]) {
+        const firstItem = rightItems[0];
+        const artistMatch = firstItem.match(/five_artist">([^<]+)/);
+        const titleMatch = firstItem.match(/five_song">([^<]+)/);
+        
+        if (artistMatch && titleMatch) {
+          const currentTrack = `${artistMatch[1].trim()} - ${titleMatch[1].trim()}`;
+          console.log('Found in last_five_list_right:', currentTrack);
+          return createSuccessResponse(currentTrack, {
+            source: 'play-radio-last-played-right'
+          });
+        }
       }
     }
-    
-    // As a last resort, check the last played songs
-    if (data.last_five_list_right) {
-      const firstItem = data.last_five_list_right.split('five_item_right">')[0];
-      const artistMatch = firstItem.match(/five_artist">([^<]+)</);
-      const titleMatch = firstItem.match(/five_song">([^<]+)</);
-      
-      if (artistMatch && titleMatch) {
-        return createSuccessResponse(
-          `${artistMatch[1].trim()} - ${titleMatch[1].trim()}`, 
-          { source: 'play-radio-last-played', responseTime: 0 }
-        );
-      }
-    }
-    
+
+    // If we got this far, we couldn't find the song info
+    console.warn('No valid song information found in response');
     return createErrorResponse('Could not retrieve current song information', 404);
+
   } catch (error) {
     console.error('Play Radio handler error:', error);
     return createErrorResponse(error.message, 500);
