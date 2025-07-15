@@ -64,14 +64,8 @@ function selectHandler(stationUrl) {
 
 async function handlePlayRadio(stationUrl) {
   try {
-    // Extract the stream identifier from the URL
-    const streamMatch = stationUrl.match(/playradio\.rs.*?\/([^\/]+)\.(mp3|aac)/i);
-    if (!streamMatch || !streamMatch[1]) {
-      throw new Error('Could not identify Play Radio stream');
-    }
-    
-    // Prepare form data for the API request
-    const formData = new FormData();
+    // Prepare the form data exactly as the API expects it
+    const formData = new URLSearchParams();
     formData.append('artist', '');
     formData.append('title', '');
     formData.append('last_artist', '');
@@ -79,23 +73,25 @@ async function handlePlayRadio(stationUrl) {
     formData.append('dataType', 'json');
     formData.append('stream', stationUrl);
     
-    // Add last_five array entries (required by the API)
+    // Add last_five array entries with empty values
     for (let i = 0; i < 5; i++) {
       formData.append(`last_five[${i}][order]`, String(i+1));
       formData.append(`last_five[${i}][artist]`, '');
       formData.append(`last_five[${i}][title]`, '');
     }
     
-    // Make the API request
+    // Make the API request with proper headers
     const apiUrl = 'https://playradio.rs/ajax/now_playing.php';
     const response = await fetch(apiUrl, {
       method: 'POST',
       body: formData,
       headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
         'Referer': 'https://playradio.rs/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      },
-      cf: { cacheTtl: 3 } // Reduced cache time for freshness
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': 'https://playradio.rs'
+      }
     });
     
     if (!response.ok) {
@@ -104,16 +100,13 @@ async function handlePlayRadio(stationUrl) {
     
     const data = await response.json();
     
-    // Debug: Log raw response for troubleshooting
-    console.log('Play Radio API Response:', data);
-    
-    // Parse the scroll text first (it often contains the current song)
+    // First try to parse the current song from scroll data
     if (data.scroll) {
       const scrollMatch = data.scroll.match(/data-marquee="([^"]+)"/);
       if (scrollMatch && scrollMatch[1]) {
-        const [artist, title] = scrollMatch[1].split(' - ');
-        if (artist && title && artist !== 'undefined' && title !== 'undefined') {
-          return createSuccessResponse(scrollMatch[1].trim(), {
+        const currentSong = scrollMatch[1].trim();
+        if (currentSong && currentSong !== 'undefined - undefined') {
+          return createSuccessResponse(currentSong, {
             source: 'play-radio-scroll',
             responseTime: 0
           });
@@ -121,57 +114,38 @@ async function handlePlayRadio(stationUrl) {
       }
     }
     
-    // If scroll parsing fails, try last_five_list_right
-    if (data.last_five_list_right) {
-      const listItems = data.last_five_list_right.split('</div><div class="five_item_right">');
-      if (listItems.length > 0) {
-        const firstItem = listItems[0];
-        const artistMatch = firstItem.match(/<span class="five_artist">([^<]+)<\/span>/);
-        const titleMatch = firstItem.match(/<span class="five_song">([^<]+)<\/span>/);
-        
-        if (artistMatch && titleMatch) {
-          return createSuccessResponse(`${artistMatch[1].trim()} - ${titleMatch[1].trim()}`, {
-            source: 'play-radio-last-five-right',
-            responseTime: 0
-          });
-        }
-      }
-    }
-    
-    // If that fails, try last_five_list
-    if (data.last_five_list) {
-      const listItems = data.last_five_list.split('</div><div class="d-flex flex-row gap-1">');
-      if (listItems.length > 0) {
-        const firstItem = listItems[0];
-        const artistMatch = firstItem.match(/<span class="lp-title">([^<]+)<\/span>/);
-        const titleMatch = firstItem.match(/<span class="text-uppercase">([^<]+)<\/span>/);
-        
-        if (artistMatch && titleMatch) {
-          return createSuccessResponse(`${artistMatch[1].trim()} - ${titleMatch[1].trim()}`, {
-            source: 'play-radio-last-five',
-            responseTime: 0
-          });
-        }
-      }
-    }
-    
-    // As a last resort, try the raw artist/title fields
+    // If no scroll data or unsuccessful, try the artist/title fields
     if (data.artist || data.title) {
-      const artist = data.artist ? data.artist.replace(/\+/g, ' ') : 'Unknown';
-      const title = data.title ? data.title.replace(/\+/g, ' ') : 'Unknown';
-      return createSuccessResponse(`${artist} - ${title}`, {
-        source: 'play-radio-raw-fields',
-        responseTime: 0
-      });
+      const artist = data.artist ? decodeURIComponent(data.artist.replace(/\+/g, ' ')) : 'Unknown';
+      const title = data.title ? decodeURIComponent(data.title.replace(/\+/g, ' ')) : 'Unknown';
+      const currentTrack = `${artist} - ${title}`;
+      
+      if (currentTrack !== 'Unknown - Unknown') {
+        return createSuccessResponse(currentTrack, {
+          source: 'play-radio-direct-fields',
+          responseTime: 0
+        });
+      }
     }
     
-    // Fall back to default handler if nothing else works
-    return handleDefaultStation(stationUrl);
+    // As a last resort, check the last played songs
+    if (data.last_five_list_right) {
+      const firstItem = data.last_five_list_right.split('five_item_right">')[0];
+      const artistMatch = firstItem.match(/five_artist">([^<]+)</);
+      const titleMatch = firstItem.match(/five_song">([^<]+)</);
+      
+      if (artistMatch && titleMatch) {
+        return createSuccessResponse(
+          `${artistMatch[1].trim()} - ${titleMatch[1].trim()}`, 
+          { source: 'play-radio-last-played', responseTime: 0 }
+        );
+      }
+    }
     
+    return createErrorResponse('Could not retrieve current song information', 404);
   } catch (error) {
     console.error('Play Radio handler error:', error);
-    // Try the default handler before giving up
-    return handleDefaultStation(stationUrl);
+    return createErrorResponse(error.message, 500);
   }
 }
 
