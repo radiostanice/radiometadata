@@ -2,8 +2,7 @@
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
-  'radio-s': handleRadioS, // New handler
-  // Add more handlers here
+  'play-radio': handlePlayRadio,
   'default': handleDefaultStation
 };
 
@@ -56,82 +55,88 @@ function selectHandler(stationUrl) {
     return STATION_HANDLERS.radioparadise;
   }
   
-  if (cleanUrl.includes('radio-s')) { // Add your pattern for Radio S
-    return STATION_HANDLERS['radio-s'];
+  if (cleanUrl.includes('playradio.rs')) {
+    return STATION_HANDLERS['play-radio'];
   }
   
   return STATION_HANDLERS.default;
 }
 
-// New: Radio S Handler (example implementation)
-async function handleRadioS(stationUrl) {
+async function handlePlayRadio(stationUrl) {
   try {
-    // First try API if available
-    const apiUrl = `https://api.radio-s.example/nowplaying`; // Replace with actual API
-    const apiResponse = await fetch(apiUrl, {
+    // Extract the stream identifier from the URL
+    const streamMatch = stationUrl.match(/playradio\.rs.*?\/([^\/]+)\.(mp3|aac)/i);
+    if (!streamMatch || !streamMatch[1]) {
+      throw new Error('Could not identify Play Radio stream');
+    }
+    
+    const streamName = streamMatch[1]; // e.g. "play", "rock", "party", etc.
+    
+    // Prepare form data for the API request
+    const formData = new FormData();
+    formData.append('artist', '');
+    formData.append('title', '');
+    formData.append('last_artist', '');
+    formData.append('last_title', '');
+    formData.append('dataType', 'json');
+    formData.append('stream', stationUrl);
+    
+    // Add last_five array entries (required by the API)
+    for (let i = 0; i < 5; i++) {
+      formData.append(`last_five[${i}][order]`, String(i+1));
+      formData.append(`last_five[${i}][artist]`, '');
+      formData.append(`last_five[${i}][title]`, '');
+    }
+    
+    // Make the API request
+    const apiUrl = 'https://playradio.rs/ajax/now_playing.php';
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      body: formData,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/json'
+        'Referer': 'https://playradio.rs/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       },
-      cf: { cacheTtl: 10 }
+      cf: { cacheTtl: 5 }
     });
-
-    if (apiResponse.ok) {
-      const data = await apiResponse.json();
-      if (data.song && data.artist) {
-        return createSuccessResponse(`${data.artist} - ${data.song}`, {
-          source: 'radio-s-api',
+    
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Extract the current song from the scroll text
+    const scrollText = data.scroll || '';
+    const songMatch = scrollText.match(/data-marquee="([^"]+)"/);
+    if (songMatch && songMatch[1]) {
+      return createSuccessResponse(songMatch[1].trim(), {
+        source: 'play-radio-api',
+        responseTime: 0
+      });
+    }
+    
+    // Fallback to last_five parsing if scroll text fails
+    if (data.last_five_list || data.last_five_list_right) {
+      // Try to parse the first song from the last five lists
+      const firstSongPattern = /artist.*?>([^<]+)<.*?song.*?>([^<]+)</;
+      const firstSongMatch = (data.last_five_list || data.last_five_list_right).match(firstSongPattern);
+      
+      if (firstSongMatch && firstSongMatch[1] && firstSongMatch[2]) {
+        return createSuccessResponse(`${firstSongMatch[1].trim()} - ${firstSongMatch[2].trim()}`, {
+          source: 'play-radio-api',
           responseTime: 0
         });
       }
     }
-
-    // If API fails, try web scraping
-    const websiteUrl = `https://www.radio-s.example`; // Replace with actual URL
-    const htmlResponse = await fetch(websiteUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      },
-      cf: { cacheTtl: 10 }
-    });
-
-    if (htmlResponse.ok) {
-      const html = await htmlResponse.text();
-      const nowPlaying = extractRadioSNowPlaying(html);
-      if (nowPlaying) {
-        return createSuccessResponse(nowPlaying, {
-          source: 'radio-s-web',
-          responseTime: 0
-        });
-      }
-    }
-
-    // Fall back to conventional methods
+    
+    // Fall back to traditional methods if API fails
     return handleDefaultStation(stationUrl);
-
+    
   } catch (error) {
-    console.error('Radio-S handler error:', error);
+    console.error('Play Radio handler error:', error);
     return handleDefaultStation(stationUrl);
   }
-}
-
-function extractRadioSNowPlaying(html) {
-  // Implement your parsing logic for Radio S
-  // Example patterns - adjust based on actual website structure
-  const patterns = [
-    /<div class="now-playing">(.*?) - (.*?)<\/div>/,
-    /"title":"([^"]+)","artist":"([^"]+)"/,
-    /Current track: (.*?) - (.*?)(?:<\/div>|$)/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match && match[1] && match[2]) {
-      return `${match[1].trim()} - ${match[2].trim()}`;
-    }
-  }
-
-  return null;
 }
 
 // Default station handler (unchanged but moved)
