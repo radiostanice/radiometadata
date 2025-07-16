@@ -89,21 +89,19 @@ async function handleRadioIn(stationUrl) {
 
     const html = await response.text();
     
-    // Updated parsing function to match the current API response
+    // Simple and reliable parsing that matches their exact response format
     const parseCurrentSong = (html) => {
-      // Match now playing section with the exact structure from the response
-      const nowPlayingMatch = html.match(
-        /<div class="noanextispis">[\s\S]*?NOW ON AIR[\s\S]*?<\/div>[\s\S]*?<div class="noapesma">([^<]+)<\/div>/i
-      );
+      // Split into sections first
+      const sections = html.split('<div class="nowonair">');
+      if (sections.length < 2) return null;
       
-      if (nowPlayingMatch && nowPlayingMatch[1]) {
-        return nowPlayingMatch[1].trim();
-      }
+      const nowPlayingSection = sections[1].split('</div>')[0];
       
-      // Alternative more flexible matching
-      const fallbackMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/i);
-      if (fallbackMatch && fallbackMatch[1]) {
-        return fallbackMatch[1].trim();
+      // Look for the song div
+      const songDiv = nowPlayingSection.match(/<div class="noapesma">([^<]+)<\/div>/);
+      
+      if (songDiv && songDiv[1]) {
+        return songDiv[1].trim();
       }
       
       return null;
@@ -115,11 +113,16 @@ async function handleRadioIn(stationUrl) {
       return createSuccessResponse(currentSong, qualityInfo);
     }
     
+    // Fallback: Very basic parsing if the above fails (shouldn't be needed)
+    const basicMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/);
+    if (basicMatch && basicMatch[1]) {
+      return createSuccessResponse(basicMatch[1].trim(), qualityInfo);
+    }
+    
     return createErrorResponse('No song information found in API response', 404, {
       debug: {
-        responseSnippet: html.length > 300 ? html.substring(0, 300) + '...' : html,
-        responseStatus: response.status,
-        matchedPattern: 'noapesma div content'
+        responseSnippet: html.length > 100 ? html.substring(0, 100) + '...' : html,
+        responseStatus: response.status
       }
     });
 
