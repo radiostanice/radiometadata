@@ -68,87 +68,84 @@ async function handleRadioIn(stationUrl) {
     format: 'MP3',
     source: 'radio-in-api'
   };
-  
+
   try {
     const apiUrl = 'https://www.radioinbeograd.rs/onair/nowonair.php';
     
-    // Use all the required headers from the request you provided
     const response = await fetch(apiUrl, {
       headers: {
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Connection': 'keep-alive',
-        'DNT': '1',
-        'Host': 'www.radioinbeograd.rs',
+        'Accept': 'text/html',
         'Referer': 'https://www.radioinbeograd.rs/live/',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-GPC': '1',
-        'TE': 'trailers',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'X-Requested-With': 'XMLHttpRequest'
       },
       cf: {
         cacheTtl: 5
       }
     });
-    
+
     if (!response.ok) {
       throw new Error(`API request failed with status ${response.status}`);
     }
-    
+
     const html = await response.text();
-    
-    // More robust parsing that handles the exact API response format
-    const parseCurrentSong = (html) => {
-      try {
-        // Try to find the current song in the first line
-        const matchNowPlaying = html.match(/nowonair[^>]*>([^<]+)<\/div><div class="noapesma">([^<]+)<\/div>/i);
-        if (matchNowPlaying && matchNowPlaying[2]) {
-          return matchNowPlaying[2].trim();
-        }
+
+    // Simple and reliable parsing for this specific format
+    const parseSongs = (html) => {
+      // Split by lines and keep only non-empty lines
+      const lines = html.split('\n').filter(line => line.trim().length > 0);
+      
+      let nowPlaying = null;
+      let nextSong = null;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
         
-        // Alternative pattern if first one fails
-        const altMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/);
-        if (altMatch) {
-          // Check if this is the current song (appears before "NEXT SONG")
-          const nextSongIndex = html.indexOf('NEXT SONG');
-          if (nextSongIndex === -1 || html.indexOf('noapesma') < nextSongIndex) {
-            return altMatch[1].trim();
+        // Current song pattern
+        if (line.includes('nowonair') && i + 1 < lines.length) {
+          const songLine = lines[i + 1].trim();
+          if (songLine.includes('noapesma')) {
+            nowPlaying = songLine.replace(/<[^>]+>/g, '').trim();
           }
         }
-      } catch (e) {
-        console.error('Error parsing current song:', e);
+        
+        // Next song pattern
+        if (line.includes('nextsong') && i + 1 < lines.length) {
+          const songLine = lines[i + 1].trim();
+          if (songLine.includes('noapesma')) {
+            nextSong = songLine.replace(/<[^>]+>/g, '').trim();
+          }
+        }
       }
-      return null;
+
+      return { nowPlaying, nextSong };
     };
-    
-    const parseNextSong = (html) => {
-      try {
-        const nextMatch = html.match(/NEXT SONG[^>]*>([^<]+)<\/div><div class="noapesma">([^<]+)<\/div>/i);
-        return nextMatch && nextMatch[2] ? nextMatch[2].trim() : null;
-      } catch (e) {
-        console.error('Error parsing next song:', e);
-        return null;
-      }
-    };
-    
-    const nowPlaying = parseCurrentSong(html) || 'Could not detect current song';
-    const nextSong = parseNextSong(html);
-    
-    // Prepare response object
+
+    const { nowPlaying, nextSong } = parseSongs(html);
+
+    if (!nowPlaying) {
+      // If parsing fails, try a simple regex fallback
+      const fallbackMatch = html.match(/noapesma[^>]*>([^<]+)<\/div>/);
+      const fallbackNowPlaying = fallbackMatch ? fallbackMatch[1].trim() : 'Could not detect current song';
+      
+      return createSuccessResponse(fallbackNowPlaying, {
+        ...qualityInfo,
+        additionalData: {
+          rawResponse: html
+        }
+      });
+    }
+
     return createSuccessResponse(nowPlaying, {
       ...qualityInfo,
       additionalData: {
         nextSong,
-        rawResponse: html // Include for debugging
+        rawResponse: html
       }
     });
-    
+
   } catch (error) {
     console.error('Radio IN handler error:', error);
-    // Fall back to default metadata extraction from stream if API fails
     return handleDefaultStation(stationUrl);
   }
 }
