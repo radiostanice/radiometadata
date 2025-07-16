@@ -72,10 +72,22 @@ async function handleRadioIn(stationUrl) {
   try {
     const apiUrl = 'https://www.radioinbeograd.rs/onair/nowonair.php';
     
+    // Use all the required headers from the request you provided
     const response = await fetch(apiUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Referer': 'https://www.radioinbeograd.rs/'
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'DNT': '1',
+        'Host': 'www.radioinbeograd.rs',
+        'Referer': 'https://www.radioinbeograd.rs/live/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-GPC': '1',
+        'TE': 'trailers',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+        'X-Requested-With': 'XMLHttpRequest'
       },
       cf: {
         cacheTtl: 5
@@ -83,36 +95,60 @@ async function handleRadioIn(stationUrl) {
     });
     
     if (!response.ok) {
-      // Fall back to default handling if API fails
-      return handleDefaultStation(stationUrl);
+      throw new Error(`API request failed with status ${response.status}`);
     }
     
     const html = await response.text();
     
-    // Simplified parsing for the simple HTML structure
-    const nowPlayingMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/);
-    const nowPlaying = nowPlayingMatch ? nowPlayingMatch[1].trim() : null;
-    
-    // Try to extract next song (in case first match didn't work)
-    const nextSongMatch = html.match(/NEXT SONG<\/div><div class="noapesma">([^<]+)<\/div>/);
-    const nextSong = nextSongMatch ? nextSongMatch[1].trim() : null;
-    
-    // If we have nowPlaying, use it
-    if (nowPlaying) {
-      return createSuccessResponse(nowPlaying, {
-        ...qualityInfo,
-        additionalData: {
-          nextSong
+    // More robust parsing that handles the exact API response format
+    const parseCurrentSong = (html) => {
+      try {
+        // Try to find the current song in the first line
+        const matchNowPlaying = html.match(/nowonair[^>]*>([^<]+)<\/div><div class="noapesma">([^<]+)<\/div>/i);
+        if (matchNowPlaying && matchNowPlaying[2]) {
+          return matchNowPlaying[2].trim();
         }
-      });
-    }
+        
+        // Alternative pattern if first one fails
+        const altMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/);
+        if (altMatch) {
+          // Check if this is the current song (appears before "NEXT SONG")
+          const nextSongIndex = html.indexOf('NEXT SONG');
+          if (nextSongIndex === -1 || html.indexOf('noapesma') < nextSongIndex) {
+            return altMatch[1].trim();
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing current song:', e);
+      }
+      return null;
+    };
     
-    // If no song found, fall back to default handling
-    return handleDefaultStation(stationUrl);
+    const parseNextSong = (html) => {
+      try {
+        const nextMatch = html.match(/NEXT SONG[^>]*>([^<]+)<\/div><div class="noapesma">([^<]+)<\/div>/i);
+        return nextMatch && nextMatch[2] ? nextMatch[2].trim() : null;
+      } catch (e) {
+        console.error('Error parsing next song:', e);
+        return null;
+      }
+    };
+    
+    const nowPlaying = parseCurrentSong(html) || 'Could not detect current song';
+    const nextSong = parseNextSong(html);
+    
+    // Prepare response object
+    return createSuccessResponse(nowPlaying, {
+      ...qualityInfo,
+      additionalData: {
+        nextSong,
+        rawResponse: html // Include for debugging
+      }
+    });
     
   } catch (error) {
     console.error('Radio IN handler error:', error);
-    // Fall back to default handling on any error
+    // Fall back to default metadata extraction from stream if API fails
     return handleDefaultStation(stationUrl);
   }
 }
