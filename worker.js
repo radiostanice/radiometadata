@@ -70,10 +70,8 @@ async function handleRadioIn(stationUrl) {
   };
   
   try {
-    // The API endpoint you provided
     const apiUrl = 'https://www.radioinbeograd.rs/onair/nowonair.php';
     
-    // Fetch the current song data
     const response = await fetch(apiUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -85,39 +83,37 @@ async function handleRadioIn(stationUrl) {
     });
     
     if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
+      // Fall back to default handling if API fails
+      return handleDefaultStation(stationUrl);
     }
     
     const html = await response.text();
     
-    // Parse the HTML to extract now playing and next song
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
+    // Simplified parsing for the simple HTML structure
+    const nowPlayingMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/);
+    const nowPlaying = nowPlayingMatch ? nowPlayingMatch[1].trim() : null;
     
-    // Extract current song
-    const nowPlayingDiv = doc.querySelector('.nowonair .noapesma');
-    const nowPlaying = nowPlayingDiv ? nowPlayingDiv.textContent.trim() : null;
+    // Try to extract next song (in case first match didn't work)
+    const nextSongMatch = html.match(/NEXT SONG<\/div><div class="noapesma">([^<]+)<\/div>/);
+    const nextSong = nextSongMatch ? nextSongMatch[1].trim() : null;
     
-    // Extract next song
-    const nextSongDiv = doc.querySelector('.nextsong .noapesma');
-    const nextSong = nextSongDiv ? nextSongDiv.textContent.trim() : null;
+    // If we have nowPlaying, use it
+    if (nowPlaying) {
+      return createSuccessResponse(nowPlaying, {
+        ...qualityInfo,
+        additionalData: {
+          nextSong
+        }
+      });
+    }
     
-    // Prepare response object
-    const data = {
-      nowPlaying: nowPlaying || 'Could not detect current song',
-      nextSong: nextSong || null
-    };
-    
-    return createSuccessResponse(data.nowPlaying, {
-      ...qualityInfo,
-      additionalData: {
-        nextSong: data.nextSong
-      }
-    });
+    // If no song found, fall back to default handling
+    return handleDefaultStation(stationUrl);
     
   } catch (error) {
     console.error('Radio IN handler error:', error);
-    return createErrorResponse(error.message, 500, qualityInfo);
+    // Fall back to default handling on any error
+    return handleDefaultStation(stationUrl);
   }
 }
 
