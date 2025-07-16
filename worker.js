@@ -70,34 +70,36 @@ async function handleRadioIn(stationUrl) {
   };
 
   try {
+    // Use the exact API endpoint from your example
     const response = await fetch('https://www.radioinbeograd.rs/onair/nowonair.php', {
       headers: {
         'Accept': 'text/html',
         'Referer': 'https://www.radioinbeograd.rs/live/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
+        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': 'https://www.radioinbeograd.rs'
       }
     });
 
-    if (!response.ok) throw new Error('API request failed');
+    if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
 
     const html = await response.text();
     
-    // Foolproof parsing that handles the exact nested structure
+    // New parsing logic that matches the exact structure
     const parseCurrentSong = (html) => {
-      // First try the exact pattern matching their structure
-      const exactMatch = html.match(
-        /<div class="nowonair">.*?<div class="noapesma">([^<]+)<\/div>.*?<\/div>/is
-      );
-      if (exactMatch && exactMatch[1]) {
-        return exactMatch[1].trim();
+      // Alternative more precise parsing
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      
+      // Try the nowplaying section first
+      const nowPlayingEl = doc.querySelector('.nowonair .noapesma');
+      if (nowPlayingEl) {
+        return nowPlayingEl.textContent.trim();
       }
       
-      // Fallback to more flexible matching if needed
-      const fallbackMatch = html.match(
-        /<div class="noapesma">([^<]+)<\/div>/i
-      );
-      return fallbackMatch ? fallbackMatch[1].trim() : null;
+      // Fallback to any noapesma element
+      const fallbackEl = doc.querySelector('.noapesma');
+      return fallbackEl ? fallbackEl.textContent.trim() : null;
     };
 
     const currentSong = parseCurrentSong(html);
@@ -106,13 +108,17 @@ async function handleRadioIn(stationUrl) {
       return createSuccessResponse(currentSong, qualityInfo);
     }
     
+    // Debugging information when no song is found
     return createErrorResponse('No song detected in response', 404, {
-      rawResponse: html.slice(0, 500) // Include first 500 chars for debugging
+      debug: {
+        htmlSnippet: html.length > 200 ? html.substring(0, 200) + '...' : html,
+        headers: Object.fromEntries(response.headers.entries())
+      }
     });
 
   } catch (error) {
     console.error('Radio IN handler error:', error);
-    return handleDefaultStation(stationUrl);
+    return createErrorResponse(`Radio IN error: ${error.message}`, 500);
   }
 }
 
