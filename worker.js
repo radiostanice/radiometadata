@@ -70,28 +70,45 @@ async function handleRadioIn(stationUrl) {
   };
 
   try {
-    // Fetch the API response
     const response = await fetch('https://www.radioinbeograd.rs/onair/nowonair.php', {
       headers: {
         'Accept': 'text/html',
         'Referer': 'https://www.radioinbeograd.rs/live/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest'
       }
     });
 
     if (!response.ok) throw new Error('API request failed');
 
     const html = await response.text();
+    
+    // Foolproof parsing that handles the exact nested structure
+    const parseCurrentSong = (html) => {
+      // First try the exact pattern matching their structure
+      const exactMatch = html.match(
+        /<div class="nowonair">.*?<div class="noapesma">([^<]+)<\/div>.*?<\/div>/is
+      );
+      if (exactMatch && exactMatch[1]) {
+        return exactMatch[1].trim();
+      }
+      
+      // Fallback to more flexible matching if needed
+      const fallbackMatch = html.match(
+        /<div class="noapesma">([^<]+)<\/div>/i
+      );
+      return fallbackMatch ? fallbackMatch[1].trim() : null;
+    };
 
-    // DIRECT SOLUTION - Just grab text between noapesma tags
-    const currentSongMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/i);
-    const currentSong = currentSongMatch ? currentSongMatch[1].trim() : null;
-
-    // If found between nowonair section - more precise
-    const nowPlayingMatch = html.match(/nowonair.+?noapesma">([^<]+)<\/div>/is);
-    const nowPlaying = nowPlayingMatch ? nowPlayingMatch[1].trim() : currentSong;
-
-    return createSuccessResponse(nowPlaying || "Could not detect current song", qualityInfo);
+    const currentSong = parseCurrentSong(html);
+    
+    if (currentSong) {
+      return createSuccessResponse(currentSong, qualityInfo);
+    }
+    
+    return createErrorResponse('No song detected in response', 404, {
+      rawResponse: html.slice(0, 500) // Include first 500 chars for debugging
+    });
 
   } catch (error) {
     console.error('Radio IN handler error:', error);
