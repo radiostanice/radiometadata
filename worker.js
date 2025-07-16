@@ -2,7 +2,7 @@
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
-  'play-radio': handlePlayRadio,
+  'radio-in': handleRadioIn,
   'default': handleDefaultStation
 };
 
@@ -55,107 +55,69 @@ function selectHandler(stationUrl) {
     return STATION_HANDLERS.radioparadise;
   }
   
-  if (cleanUrl.includes('playradio.rs')) {
-    return STATION_HANDLERS['play-radio'];
+  if (cleanUrl.includes('radioin-128ssl.streaming.rs')) {
+    return STATION_HANDLERS['radio-in'];
   }
   
   return STATION_HANDLERS.default;
 }
 
-async function handlePlayRadio(stationUrl) {
+async function handleRadioIn(stationUrl) {
+  const qualityInfo = {
+    bitrate: '128',
+    format: 'MP3',
+    source: 'radio-in-api'
+  };
+  
   try {
-    // Create the form data as the API expects with empty values
-    const formData = new URLSearchParams();
-    formData.append('artist', '');
-    formData.append('title', '');
-    formData.append('last_artist', '');
-    formData.append('last_title', '');
-    formData.append('dataType', 'json');
-    formData.append('stream', stationUrl);
+    // The API endpoint you provided
+    const apiUrl = 'https://www.radioinbeograd.rs/onair/nowonair.php';
     
-    // Add empty last_five array
-    for (let i = 0; i < 5; i++) {
-      formData.append(`last_five[${i}][order]`, String(i+1));
-      formData.append(`last_five[${i}][artist]`, '');
-      formData.append(`last_five[${i}][title]`, '');
-    }
-
-    // Make the API request
-    const apiUrl = 'https://playradio.rs/ajax/now_playing.php';
+    // Fetch the current song data
     const response = await fetch(apiUrl, {
-      method: 'POST',
-      body: formData,
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': 'https://playradio.rs/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Origin': 'https://playradio.rs'
+        'Referer': 'https://www.radioinbeograd.rs/'
+      },
+      cf: {
+        cacheTtl: 5
       }
     });
-
-    const data = await response.json();
-
-    // First try to extract from scroll data if available
-    if (data.scroll) {
-      const scrollMatch = data.scroll.match(/data-marquee="([^"]+)"/);
-      if (scrollMatch && scrollMatch[1]) {
-        const currentSong = scrollMatch[1].trim();
-        if (currentSong && currentSong !== '-' && !currentSong.includes('undefined')) {
-          return createSuccessResponse(currentSong, {
-            source: 'play-radio-scroll'
-          });
-        }
+    
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+    
+    const html = await response.text();
+    
+    // Parse the HTML to extract now playing and next song
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    
+    // Extract current song
+    const nowPlayingDiv = doc.querySelector('.nowonair .noapesma');
+    const nowPlaying = nowPlayingDiv ? nowPlayingDiv.textContent.trim() : null;
+    
+    // Extract next song
+    const nextSongDiv = doc.querySelector('.nextsong .noapesma');
+    const nextSong = nextSongDiv ? nextSongDiv.textContent.trim() : null;
+    
+    // Prepare response object
+    const data = {
+      nowPlaying: nowPlaying || 'Could not detect current song',
+      nextSong: nextSong || null
+    };
+    
+    return createSuccessResponse(data.nowPlaying, {
+      ...qualityInfo,
+      additionalData: {
+        nextSong: data.nextSong
       }
-    }
-
-    // Then try to parse from last_five_list_right (often has the most recent song)
-    if (data.last_five_list_right) {
-      // Extract first item from last_five_list_right
-      const firstItemMatch = data.last_five_list_right.match(
-        /<span class="five_artist">([^<]+)<\/span>\s*<br>\s*<span class="five_song">([^<]+)<\/span>/
-      );
-      
-      if (firstItemMatch && firstItemMatch[1] && firstItemMatch[2]) {
-        const artist = firstItemMatch[1].trim();
-        const title = firstItemMatch[2].trim();
-        if (artist && title) {
-          return createSuccessResponse(`${artist} - ${title}`, {
-            source: 'play-radio-last-five-right'
-          });
-        }
-      }
-    }
-
-    // As final fallback, try last_five_list
-    if (data.last_five_list) {
-      const firstItemMatch = data.last_five_list.match(
-        /<span class="lp-title">([^<]+)<\/span>\s*<br>\s*<span class="text-uppercase">([^<]+)<\/span>/
-      );
-      
-      if (firstItemMatch && firstItemMatch[1] && firstItemMatch[2]) {
-        const artist = firstItemMatch[1].trim();
-        const title = firstItemMatch[2].trim().toLowerCase(); // Uppercase is often all caps
-        if (artist && title) {
-          return createSuccessResponse(`${artist} - ${title}`, {
-            source: 'play-radio-last-five'
-          });
-        }
-      }
-    }
-
-    // If all else fails, try to find any song information in the response
-    const fallbackMatch = JSON.stringify(data).match(/"([^"]+)\s*-\s*([^"]+)"/);
-    if (fallbackMatch && fallbackMatch[1] && fallbackMatch[2]) {
-      return createSuccessResponse(`${fallbackMatch[1].trim()} - ${fallbackMatch[2].trim()}`, {
-        source: 'play-radio-fallback'
-      });
-    }
-
-    return createErrorResponse('No song information found in response', 404);
+    });
+    
   } catch (error) {
-    console.error('Play Radio handler error:', error);
-    return createErrorResponse(error.message, 500);
+    console.error('Radio IN handler error:', error);
+    return createErrorResponse(error.message, 500, qualityInfo);
   }
 }
 
