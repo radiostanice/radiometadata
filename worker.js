@@ -2,7 +2,6 @@
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
-  'radio-in': handleRadioIn,
   'default': handleDefaultStation
 };
 
@@ -55,81 +54,7 @@ function selectHandler(stationUrl) {
     return STATION_HANDLERS.radioparadise;
   }
   
-  if (cleanUrl.includes('radioin-128ssl.streaming.rs')) {
-    return STATION_HANDLERS['radio-in'];
-  }
-  
   return STATION_HANDLERS.default;
-}
-
-async function handleRadioIn(stationUrl) {
-  const qualityInfo = {
-    bitrate: '128',
-    format: 'MP3',
-    source: 'radio-in-api'
-  };
-
-  try {
-    const response = await fetch('https://www.radioinbeograd.rs/onair/nowonair.php', {
-      headers: {
-        'Accept': 'text/html',
-        'Referer': 'https://www.radioinbeograd.rs/live/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Origin': 'https://www.radioinbeograd.rs'
-      },
-      cf: {
-        cacheTtl: 15 // Cache for 15 seconds
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
-    }
-
-    const html = await response.text();
-    
-    // Simple and reliable parsing that matches their exact response format
-    const parseCurrentSong = (html) => {
-      // Split into sections first
-      const sections = html.split('<div class="nowonair">');
-      if (sections.length < 2) return null;
-      
-      const nowPlayingSection = sections[1].split('</div>')[0];
-      
-      // Look for the song div
-      const songDiv = nowPlayingSection.match(/<div class="noapesma">([^<]+)<\/div>/);
-      
-      if (songDiv && songDiv[1]) {
-        return songDiv[1].trim();
-      }
-      
-      return null;
-    };
-
-    const currentSong = parseCurrentSong(html);
-    
-    if (currentSong) {
-      return createSuccessResponse(currentSong, qualityInfo);
-    }
-    
-    // Fallback: Very basic parsing if the above fails (shouldn't be needed)
-    const basicMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/);
-    if (basicMatch && basicMatch[1]) {
-      return createSuccessResponse(basicMatch[1].trim(), qualityInfo);
-    }
-    
-    return createErrorResponse('No song information found in API response', 404, {
-      debug: {
-        responseSnippet: html.length > 100 ? html.substring(0, 100) + '...' : html,
-        responseStatus: response.status
-      }
-    });
-
-  } catch (error) {
-    console.error('Radio IN handler error:', error);
-    return createErrorResponse(`Radio IN error: ${error.message}`, 500, qualityInfo);
-  }
 }
 
 // Default station handler (unchanged but moved)
