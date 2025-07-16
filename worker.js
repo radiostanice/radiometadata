@@ -89,20 +89,24 @@ async function handleRadioIn(stationUrl) {
 
     const html = await response.text();
     
-    // More precise regex to handle their exact response format
+    // Updated parsing function to match the current API response
     const parseCurrentSong = (html) => {
-      // Match now playing section exactly as it appears in their response
+      // Match now playing section with the exact structure from the response
       const nowPlayingMatch = html.match(
-        /<div class="nowonair">[\s\S]*?<div class="noapesma">([^<]+)<\/div>[\s\S]*?<\/div>/i
+        /<div class="noanextispis">[\s\S]*?NOW ON AIR[\s\S]*?<\/div>[\s\S]*?<div class="noapesma">([^<]+)<\/div>/i
       );
       
       if (nowPlayingMatch && nowPlayingMatch[1]) {
         return nowPlayingMatch[1].trim();
       }
       
-      // Strong safety fallback - match any noapesma div content
+      // Alternative more flexible matching
       const fallbackMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/i);
-      return fallbackMatch ? fallbackMatch[1].trim() : null;
+      if (fallbackMatch && fallbackMatch[1]) {
+        return fallbackMatch[1].trim();
+      }
+      
+      return null;
     };
 
     const currentSong = parseCurrentSong(html);
@@ -115,7 +119,7 @@ async function handleRadioIn(stationUrl) {
       debug: {
         responseSnippet: html.length > 300 ? html.substring(0, 300) + '...' : html,
         responseStatus: response.status,
-        matchedPattern: 'div class="nowonair"[\\s\\S]*?div class="noapesma">([^<]+)'
+        matchedPattern: 'noapesma div content'
       }
     });
 
