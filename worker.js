@@ -70,79 +70,28 @@ async function handleRadioIn(stationUrl) {
   };
 
   try {
-    const apiUrl = 'https://www.radioinbeograd.rs/onair/nowonair.php';
-    
-    const response = await fetch(apiUrl, {
+    // Fetch the API response
+    const response = await fetch('https://www.radioinbeograd.rs/onair/nowonair.php', {
       headers: {
         'Accept': 'text/html',
         'Referer': 'https://www.radioinbeograd.rs/live/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      cf: {
-        cacheTtl: 5
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
     });
 
-    if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
-    }
+    if (!response.ok) throw new Error('API request failed');
 
     const html = await response.text();
 
-    // Simple and reliable parsing for this specific format
-    const parseSongs = (html) => {
-      // Split by lines and keep only non-empty lines
-      const lines = html.split('\n').filter(line => line.trim().length > 0);
-      
-      let nowPlaying = null;
-      let nextSong = null;
+    // DIRECT SOLUTION - Just grab text between noapesma tags
+    const currentSongMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/i);
+    const currentSong = currentSongMatch ? currentSongMatch[1].trim() : null;
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        
-        // Current song pattern
-        if (line.includes('nowonair') && i + 1 < lines.length) {
-          const songLine = lines[i + 1].trim();
-          if (songLine.includes('noapesma')) {
-            nowPlaying = songLine.replace(/<[^>]+>/g, '').trim();
-          }
-        }
-        
-        // Next song pattern
-        if (line.includes('nextsong') && i + 1 < lines.length) {
-          const songLine = lines[i + 1].trim();
-          if (songLine.includes('noapesma')) {
-            nextSong = songLine.replace(/<[^>]+>/g, '').trim();
-          }
-        }
-      }
+    // If found between nowonair section - more precise
+    const nowPlayingMatch = html.match(/nowonair.+?noapesma">([^<]+)<\/div>/is);
+    const nowPlaying = nowPlayingMatch ? nowPlayingMatch[1].trim() : currentSong;
 
-      return { nowPlaying, nextSong };
-    };
-
-    const { nowPlaying, nextSong } = parseSongs(html);
-
-    if (!nowPlaying) {
-      // If parsing fails, try a simple regex fallback
-      const fallbackMatch = html.match(/noapesma[^>]*>([^<]+)<\/div>/);
-      const fallbackNowPlaying = fallbackMatch ? fallbackMatch[1].trim() : 'Could not detect current song';
-      
-      return createSuccessResponse(fallbackNowPlaying, {
-        ...qualityInfo,
-        additionalData: {
-          rawResponse: html
-        }
-      });
-    }
-
-    return createSuccessResponse(nowPlaying, {
-      ...qualityInfo,
-      additionalData: {
-        nextSong,
-        rawResponse: html
-      }
-    });
+    return createSuccessResponse(nowPlaying || "Could not detect current song", qualityInfo);
 
   } catch (error) {
     console.error('Radio IN handler error:', error);
