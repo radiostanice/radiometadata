@@ -64,7 +64,7 @@ function selectHandler(stationUrl) {
 
 async function handlePlayRadio(stationUrl) {
   try {
-    // Create the form data exactly as the API expects
+    // Create the form data as the API expects with empty values
     const formData = new URLSearchParams();
     formData.append('artist', '');
     formData.append('title', '');
@@ -73,14 +73,14 @@ async function handlePlayRadio(stationUrl) {
     formData.append('dataType', 'json');
     formData.append('stream', stationUrl);
     
-    // Add empty entries for last_five array
+    // Add empty last_five array
     for (let i = 0; i < 5; i++) {
       formData.append(`last_five[${i}][order]`, String(i+1));
       formData.append(`last_five[${i}][artist]`, '');
       formData.append(`last_five[${i}][title]`, '');
     }
 
-    // Make the API request with proper headers
+    // Make the API request
     const apiUrl = 'https://playradio.rs/ajax/now_playing.php';
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -94,29 +94,14 @@ async function handlePlayRadio(stationUrl) {
       }
     });
 
-    // Parse both response text and form data
     const data = await response.json();
-    const formDataText = await formData.toString();
 
-    // First try to get current song from the request form data (where it's actually stored)
-    const formDataMatch = formDataText.match(/artist=([^&]+)&title=([^&]+)/);
-    if (formDataMatch && formDataMatch[1] && formDataMatch[2]) {
-      const artist = decodeURIComponent(formDataMatch[1].replace(/\+/g, ' ')).trim();
-      const title = decodeURIComponent(formDataMatch[2].replace(/\+/g, ' ')).trim();
-      if (artist && title) {
-        const currentTrack = `${artist} - ${title}`;
-        return createSuccessResponse(currentTrack, {
-          source: 'play-radio-form-data'
-        });
-      }
-    }
-
-    // Then check response data as fallback (though unlikely to have current song)
+    // First try to extract from scroll data if available
     if (data.scroll) {
       const scrollMatch = data.scroll.match(/data-marquee="([^"]+)"/);
       if (scrollMatch && scrollMatch[1]) {
         const currentSong = scrollMatch[1].trim();
-        if (currentSong && !currentSong.includes('undefined') && currentSong !== '-') {
+        if (currentSong && currentSong !== '-' && !currentSong.includes('undefined')) {
           return createSuccessResponse(currentSong, {
             source: 'play-radio-scroll'
           });
@@ -124,17 +109,50 @@ async function handlePlayRadio(stationUrl) {
       }
     }
 
-    // Check last played songs as last resort
-    if (data.last_five_list) {
-      const firstItem = data.last_five_list.match(/<span class="lp-title">([^<]+)<\/span>[\s\S]*?<span class="text-uppercase">([^<]+)/);
-      if (firstItem && firstItem[1] && firstItem[2]) {
-        return createSuccessResponse(`${firstItem[1].trim()} - ${firstItem[2].trim()}`, {
-          source: 'play-radio-last-played'
-        });
+    // Then try to parse from last_five_list_right (often has the most recent song)
+    if (data.last_five_list_right) {
+      // Extract first item from last_five_list_right
+      const firstItemMatch = data.last_five_list_right.match(
+        /<span class="five_artist">([^<]+)<\/span>\s*<br>\s*<span class="five_song">([^<]+)<\/span>/
+      );
+      
+      if (firstItemMatch && firstItemMatch[1] && firstItemMatch[2]) {
+        const artist = firstItemMatch[1].trim();
+        const title = firstItemMatch[2].trim();
+        if (artist && title) {
+          return createSuccessResponse(`${artist} - ${title}`, {
+            source: 'play-radio-last-five-right'
+          });
+        }
       }
     }
 
-    return createErrorResponse('Could not retrieve current song information', 404);
+    // As final fallback, try last_five_list
+    if (data.last_five_list) {
+      const firstItemMatch = data.last_five_list.match(
+        /<span class="lp-title">([^<]+)<\/span>\s*<br>\s*<span class="text-uppercase">([^<]+)<\/span>/
+      );
+      
+      if (firstItemMatch && firstItemMatch[1] && firstItemMatch[2]) {
+        const artist = firstItemMatch[1].trim();
+        const title = firstItemMatch[2].trim().toLowerCase(); // Uppercase is often all caps
+        if (artist && title) {
+          return createSuccessResponse(`${artist} - ${title}`, {
+            source: 'play-radio-last-five'
+          });
+        }
+      }
+    }
+
+    // If all else fails, try to find any song information in the response
+    const fallbackMatch = JSON.stringify(data).match(/"([^"]+)\s*-\s*([^"]+)"/);
+    if (fallbackMatch && fallbackMatch[1] && fallbackMatch[2]) {
+      return createSuccessResponse(`${fallbackMatch[1].trim()} - ${fallbackMatch[2].trim()}`, {
+        source: 'play-radio-fallback'
+      });
+    }
+
+    return createErrorResponse('No song information found in response', 404);
   } catch (error) {
     console.error('Play Radio handler error:', error);
     return createErrorResponse(error.message, 500);
