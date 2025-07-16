@@ -79,7 +79,7 @@ async function handleRadioIn(stationUrl) {
         'Origin': 'https://www.radioinbeograd.rs'
       },
       cf: {
-        cacheTtl: 5  // Cache for 15 seconds to avoid hitting their server too often
+        cacheTtl: 15 // Cache for 15 seconds
       }
     });
 
@@ -89,15 +89,18 @@ async function handleRadioIn(stationUrl) {
 
     const html = await response.text();
     
-    // Regex to match either now playing or next song
+    // More precise regex to handle their exact response format
     const parseCurrentSong = (html) => {
-      // First try to get current song
-      const nowPlayingMatch = html.match(/<div class="nowonair">[\s\S]*?<div class="noapesma">([^<]+)<\/div>/i);
+      // Match now playing section exactly as it appears in their response
+      const nowPlayingMatch = html.match(
+        /<div class="nowonair">[\s\S]*?<div class="noapesma">([^<]+)<\/div>[\s\S]*?<\/div>/i
+      );
+      
       if (nowPlayingMatch && nowPlayingMatch[1]) {
         return nowPlayingMatch[1].trim();
       }
       
-      // If that fails, try any song info (as fallback)
+      // Strong safety fallback - match any noapesma div content
       const fallbackMatch = html.match(/<div class="noapesma">([^<]+)<\/div>/i);
       return fallbackMatch ? fallbackMatch[1].trim() : null;
     };
@@ -109,9 +112,11 @@ async function handleRadioIn(stationUrl) {
     }
     
     return createErrorResponse('No song information found in API response', 404, {
-      rawResponse: html.slice(0, 300) + (html.length > 300 ? '...' : ''),
-      responseStatus: response.status,
-      responseHeaders: Object.fromEntries(response.headers)
+      debug: {
+        responseSnippet: html.length > 300 ? html.substring(0, 300) + '...' : html,
+        responseStatus: response.status,
+        matchedPattern: 'div class="nowonair"[\\s\\S]*?div class="noapesma">([^<]+)'
+      }
     });
 
   } catch (error) {
