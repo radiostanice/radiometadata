@@ -52,7 +52,7 @@ function selectHandler(stationUrl) {
   }
   
   if (cleanUrl.includes('radioparadise.com')) {
-    return STATION_HANDLERS.radioparadise;
+    return STATION_HANDLERS.radioparade;
   }
   
   return STATION_HANDLERS.default;
@@ -125,61 +125,10 @@ function normalizeUrlForComparison(url) {
 
 // Handle Naxi radio stations
 async function handleNaxiRadio(stationUrl) {
-  // Map station URLs to their webpage paths
-  const stationNameMap = {
-    'naxi128.streaming.rs:9152': 'naxi',
-    'naxidigital-hype128ssl.streaming.rs:8272': 'hype',
-    'naxidigital-rock128ssl.streaming.rs:8182': 'rock',
-    'naxidigital-exyu128ssl.streaming.rs:8242': 'exyu',
-    'naxidigital-exyurock128ssl.streaming.rs:8402': 'exyurock',
-    'naxidigital-70s128ssl.streaming.rs:8382': '70e',
-    'naxidigital-80s128ssl.streaming.rs:8042': '80e',
-    'naxidigital-90s128ssl.streaming.rs:8282': '90e',
-    'naxidigital-cafe128ssl.streaming.rs:8022': 'cafe',
-    'naxidigital-classic128ssl.streaming.rs:8032': 'classic',
-    'naxidigital-jazz128ssl.streaming.rs:8172': 'jazz',
-    'naxidigital-chill128ssl.streaming.rs:8412': 'chill',
-    'naxidigital-house128ssl.streaming.rs:8002': 'house',
-    'naxidigital-lounge128ssl.streaming.rs:8252': 'lounge',
-    'naxidigital-chillwave128ssl.streaming.rs:8322': 'chillwave',
-    'naxidigital-instrumental128.streaming.rs:8432': 'instrumental',
-    'naxidigital-reggae128.streaming.rs:8422': 'reggae',
-    'naxidigital-rnb128ssl.streaming.rs:8122': 'rnb',
-    'naxidigital-mix128ssl.streaming.rs:8222': 'mix',
-    'naxidigital-gold128ssl.streaming.rs:8062': 'gold',
-    'naxidigital-blues128ssl.streaming.rs:8312': 'blues-rock',
-    'naxidigital-evergreen128ssl.streaming.rs:8012': 'evergreen',
-    'naxidigital-funk128ssl.streaming.rs:8362': 'funk',
-    'naxidigital-dance128ssl.streaming.rs:8112': 'dance',
-    'naxidigital-disco128ssl.streaming.rs:8352': 'disco',
-    'naxidigital-clubbing128ssl.streaming.rs:8092': 'clubbing',
-    'naxidigital-fresh128ssl.streaming.rs:8212': 'fresh',
-    'naxidigital-latino128ssl.streaming.rs:8232': 'latino',
-    'naxidigital-love128ssl.streaming.rs:8102': 'love',
-    'naxidigital-boem128ssl.streaming.rs:8162': 'boem',
-    'naxidigital-adore128ssl.streaming.rs:8332': 'adore',
-    'naxidigital-slager128ssl.streaming.rs:8372': 'slager',
-    'naxidigital-millennium128ssl.streaming.rs:8342': 'millennium',
-    'naxidigital-fitness128ssl.streaming.rs:8292': 'fitness',
-    'naxidigital-kids128ssl.streaming.rs:8052': 'kids',
-    'naxidigital-xmas128.streaming.rs:8392': 'xmas'
-  };
-
-  // Extract station key from URL
-  const cleanUrl = stationUrl
-    .replace('https://', '')
-    .replace('http://', '')
-    .replace(';stream.nsv', '')
-    .replace(';*.mp3', '')
-    .split('/')[0];
-
-  // Get the station name for web scraping
-  const stationName = stationNameMap[cleanUrl] || cleanUrl;
-  
   try {
-    // Direct web scraping approach for Naxi.rs
-    const webUrl = `https://www.naxi.rs/radio/${stationName}`;
-    const nowPlaying = await tryNaxiWebScraping(webUrl);
+    // Scrape the main Naxi.rs page which contains all station metadata
+    const webUrl = 'https://www.naxi.rs/';
+    const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl);
 
     // Check if we got valid data
     if (nowPlaying) {
@@ -200,8 +149,8 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-// Web scraping function specifically for Naxi.rs with new structure
-async function tryNaxiWebScraping(url) {
+// Web scraping function specifically for Naxi.rs main page
+async function tryNaxiWebScraping(url, stationUrl) {
   try {
     const response = await fetch(url, {
       headers: {
@@ -218,7 +167,7 @@ async function tryNaxiWebScraping(url) {
     }
 
     const html = await response.text();
-    return extractNaxiNowPlaying(html);
+    return extractNaxiNowPlaying(html, stationUrl);
   } catch (error) {
     console.error(`Error with Naxi web scraping (${url}):`, error);
     return null;
@@ -276,18 +225,70 @@ function isNaxiStation(stationUrl) {
 }
 
 // Extract currently playing song from Naxi HTML with new structure
-function extractNaxiNowPlaying(html) {
+function extractNaxiNowPlaying(html, stationUrl) {
   try {
-    // New pattern for the updated Naxi.rs structure
-    const artistPattern = /<p class="artist-name"[^>]*>([^<]+)<\/p>/i;
-    const titlePattern = /<p class="song-title"[^>]*[^>]*>([^<]+)<\/p>/i;
+    // Map streaming URLs to CSS classes used in the HTML
+    const stationClassMap = {
+      'naxi128.streaming.rs:9152': 'naxi',
+      'naxidigital-hype128ssl.streaming.rs:8272': 'hype',
+      'naxidigital-rock128ssl.streaming.rs:8182': 'rock',
+      'naxidigital-exyu128ssl.streaming.rs:8242': 'exyu',
+      'naxidigital-exyurock128ssl.streaming.rs:8402': 'exyurock',
+      'naxidigital-70s128ssl.streaming.rs:8382': '70e',
+      'naxidigital-80s128ssl.streaming.rs:8042': '80e',
+      'naxidigital-90s128ssl.streaming.rs:8282': '90e',
+      'naxidigital-cafe128ssl.streaming.rs:8022': 'cafe',
+      'naxidigital-classic128ssl.streaming.rs:8032': 'classic',
+      'naxidigital-jazz128ssl.streaming.rs:8172': 'jazz',
+      'naxidigital-chill128ssl.streaming.rs:8412': 'chill',
+      'naxidigital-house128ssl.streaming.rs:8002': 'house',
+      'naxidigital-lounge128ssl.streaming.rs:8252': 'lounge',
+      'naxidigital-chillwave128ssl.streaming.rs:8322': 'chillwave',
+      'naxidigital-instrumental128.streaming.rs:8432': 'instrumental',
+      'naxidigital-reggae128.streaming.rs:8422': 'reggae',
+      'naxidigital-rnb128ssl.streaming.rs:8122': 'rnb',
+      'naxidigital-mix128ssl.streaming.rs:8222': 'mix',
+      'naxidigital-gold128ssl.streaming.rs:8062': 'gold',
+      'naxidigital-blues128ssl.streaming.rs:8312': 'blues-rock',
+      'naxidigital-evergreen128ssl.streaming.rs:8012': 'evergreen',
+      'naxidigital-funk128ssl.streaming.rs:8362': 'funk',
+      'naxidigital-dance128ssl.streaming.rs:8112': 'dance',
+      'naxidigital-disco128ssl.streaming.rs:8352': 'disco',
+      'naxidigital-clubbing128ssl.streaming.rs:8092': 'clubbing',
+      'naxidigital-fresh128ssl.streaming.rs:8212': 'fresh',
+      'naxidigital-latino128ssl.streaming.rs:8232': 'latino',
+      'naxidigital-love128ssl.streaming.rs:8102': 'love',
+      'naxidigital-boem128ssl.streaming.rs:8162': 'boem',
+      'naxidigital-adore128ssl.streaming.rs:8332': 'adore',
+      'naxidigital-slager128ssl.streaming.rs:8372': 'slager',
+      'naxidigital-millennium128ssl.streaming.rs:8342': 'millennium',
+      'naxidigital-fitness128ssl.streaming.rs:8292': 'fitness',
+      'naxidigital-kids128ssl.streaming.rs:8052': 'kids',
+      'naxidigital-xmas128.streaming.rs:8392': 'xmas'
+    };
+
+    // Extract station key from URL
+    const cleanUrl = stationUrl
+      .replace('https://', '')
+      .replace('http://', '')
+      .replace(';stream.nsv', '')
+      .replace(';*.mp3', '')
+      .split('/')[0];
+
+    // Get the CSS class for this station
+    const stationClass = stationClassMap[cleanUrl] || cleanUrl.split('.')[0];
     
-    const artistMatch = html.match(artistPattern);
-    const titleMatch = html.match(titlePattern);
+    // Pattern to match the specific station's artist and song
+    const stationPattern = new RegExp(
+      `<p class="artist ${stationClass}"[^>]*>([^<]+)<\\/p>\\s*<p class="song ${stationClass}"[^>]*>([^<]+)<\\/p>`,
+      'i'
+    );
     
-    if (artistMatch && titleMatch && artistMatch[1] && titleMatch[1]) {
-      const artist = artistMatch[1].trim();
-      const title = titleMatch[1].trim();
+    const match = html.match(stationPattern);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
       
       // Basic validation to avoid station names
       if (artist && title && 
@@ -297,13 +298,17 @@ function extractNaxiNowPlaying(html) {
       }
     }
     
-    // Alternative pattern if the above doesn't work
-    const combinedPattern = /<div class="current-program__data"[^>]*>[\s\S]*?<p class="artist-name"[^>]*>([^<]+)<\/p>[\s\S]*?<p class="song-title"[^>]*>([^<]+)<\/p>/i;
-    const combinedMatch = html.match(combinedPattern);
+    // Alternative pattern matching the structure you provided
+    const alternativePattern = new RegExp(
+      `<div class="station-data"[^>]*>\\s*<p class="artist ${stationClass}"[^>]*>([^<]+)<\\/p>\\s*<p class="song ${stationClass}"[^>]*>([^<]+)<\\/p>`,
+      'is'
+    );
     
-    if (combinedMatch && combinedMatch[1] && combinedMatch[2]) {
-      const artist = combinedMatch[1].trim();
-      const title = combinedMatch[2].trim();
+    const altMatch = html.match(alternativePattern);
+    
+    if (altMatch && altMatch[1] && altMatch[2]) {
+      const artist = altMatch[1].trim();
+      const title = altMatch[2].trim();
       
       if (artist && title && 
           !artist.toLowerCase().includes('naxi') && 
