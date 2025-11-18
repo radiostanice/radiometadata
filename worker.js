@@ -8,16 +8,14 @@ const STATION_HANDLERS = {
 export default {
   async fetch(request, env) {
     // Handle CORS preflight requests
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Max-Age': '86400',
-    };
-
     if (request.method === 'OPTIONS') {
       return new Response(null, {
-        headers: corsHeaders
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        }
       });
     }
 
@@ -26,16 +24,7 @@ export default {
     const stationUrl = url.searchParams.get('url');
     
     if (!stationUrl) {
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'Missing station URL parameter'
-      }), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
+      return createErrorResponse('Missing station URL parameter', 400);
     }
 
     try {
@@ -45,16 +34,10 @@ export default {
 
     } catch (error) {
       console.error('Metadata fetch error:', error);
-      return new Response(JSON.stringify({
-        success: false,
-        error: error.name === 'AbortError' ? 'Request timeout' : error.message
-      }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      });
+      return createErrorResponse(
+        error.name === 'AbortError' ? 'Request timeout' : error.message, 
+        500
+      );
     }
   }
 }
@@ -96,42 +79,37 @@ async function handleDefaultStation(stationUrl) {
   const timeoutId = setTimeout(() => controller.abort(), 3000);
   fetchOptions.signal = controller.signal;
 
-  try {
-    const response = await fetch(stationUrl, fetchOptions);
-    clearTimeout(timeoutId);
+  const response = await fetch(stationUrl, fetchOptions);
+  clearTimeout(timeoutId);
 
-    const qualityInfo = {
-      bitrate: response.headers.get('icy-br') || null,
-      metaInterval: response.headers.get('icy-metaint'),
-      contentType: response.headers.get('content-type'),
-      server: response.headers.get('server'),
-      responseTime: Date.now() - startTime,
-      icyHeadersPresent: response.headers.get('icy-metaint') !== null
-    };
+  const qualityInfo = {
+    bitrate: response.headers.get('icy-br') || null,
+    metaInterval: response.headers.get('icy-metaint'),
+    contentType: response.headers.get('content-type'),
+    server: response.headers.get('server'),
+    responseTime: Date.now() - startTime,
+    icyHeadersPresent: response.headers.get('icy-metaint') !== null
+  };
 
-    // Check if we have ICY headers for metadata
-    const icyTitle = response.headers.get('icy-title');
-    if (icyTitle && !isLikelyStationName(icyTitle)) {
-      return createSuccessResponse(icyTitle, qualityInfo);
-    }
-
-    // Parse metadata from stream if meta interval exists
-    const metaInt = parseInt(response.headers.get('icy-metaint'));
-    if (metaInt) {
-      const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
-      if (currentMetadata) {
-        return createSuccessResponse(currentMetadata, qualityInfo);
-      }
-    }
-
-    // If no metadata found, try alternative methods
-    const metadata = await tryAlternativeMethods(response, qualityInfo);
-    
-    return createSuccessResponse(metadata, qualityInfo);
-  } catch (error) {
-    clearTimeout(timeoutId);
-    throw error;
+  // Check if we have ICY headers for metadata
+  const icyTitle = response.headers.get('icy-title');
+  if (icyTitle && !isLikelyStationName(icyTitle)) {
+    return createSuccessResponse(icyTitle, qualityInfo);
   }
+
+  // Parse metadata from stream if meta interval exists
+  const metaInt = parseInt(response.headers.get('icy-metaint'));
+  if (metaInt) {
+    const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
+    if (currentMetadata) {
+      return createSuccessResponse(currentMetadata, qualityInfo);
+    }
+  }
+
+  // If no metadata found, try alternative methods
+  const metadata = await tryAlternativeMethods(response, qualityInfo);
+  
+  return createSuccessResponse(metadata, qualityInfo);
 }
 
 // Helper function for URL normalization
@@ -144,71 +122,76 @@ function normalizeUrlForComparison(url) {
     .toLowerCase();
 }
 
-// Handle Naxi radio stations - SIMPLIFIED FOCUSED APPROACH
+// Handle Naxi radio stations - COMPLETE REWRITE
 async function handleNaxiRadio(stationUrl) {
   try {
-    // Map streaming hosts to their corresponding web pages and data-station values
-    const hostToInfoMap = {
-	  'naxi128.streaming.rs:9152': { page: 'live', station: 'naxi' },
-      'naxidigital-rnb128ssl.streaming.rs': { page: 'rnb', station: 'rnb' },
-      'naxidigital-rock128ssl.streaming.rs': { page: 'rock', station: 'rock' },
-      'naxidigital-house128ssl.streaming.rs': { page: 'house', station: 'house' },
-      'naxidigital-cafe128ssl.streaming.rs': { page: 'cafe', station: 'cafe' },
-      'naxidigital-jazz128ssl.streaming.rs': { page: 'jazz', station: 'jazz' },
-      'naxidigital-classic128ssl.streaming.rs': { page: 'classic', station: 'classic' },
-      'naxidigital-80s128ssl.streaming.rs': { page: '80s', station: '80s' },
-      'naxidigital-90s128ssl.streaming.rs': { page: '90s', station: '90s' },
-      'naxidigital-reggae128.streaming.rs': { page: 'reggae', station: 'reggae' },
-      'naxidigital-blues128ssl.streaming.rs': { page: 'blues', station: 'blues-rock' },
-      'naxidigital-chill128ssl.streaming.rs': { page: 'chillout', station: 'chill' },
-      'naxidigital-lounge128ssl.streaming.rs': { page: 'lounge', station: 'lounge' },
-      'naxidigital-dance128ssl.streaming.rs': { page: 'dance', station: 'dance' },
-      'naxidigital-funk128ssl.streaming.rs': { page: 'funk', station: 'funk' },
-      'naxidigital-disco128ssl.streaming.rs': { page: 'disco', station: 'disco' },
-      'naxidigital-evergreen128ssl.streaming.rs': { page: 'evergreen', station: 'evergreen' },
-      'naxidigital-mix128ssl.streaming.rs': { page: 'mix', station: 'mix' },
-      'naxidigital-gold128ssl.streaming.rs': { page: 'gold', station: 'gold' },
-      'naxidigital-latino128ssl.streaming.rs': { page: 'latino', station: 'latino' },
-      'naxidigital-love128ssl.streaming.rs': { page: 'love', station: 'love' },
-      'naxidigital-clubbing128ssl.streaming.rs': { page: 'clubbing', station: 'clubbing' },
-      'naxidigital-exyu128ssl.streaming.rs': { page: 'exyu', station: 'exyu' },
-      'naxidigital-exyurock128ssl.streaming.rs': { page: 'exyurock', station: 'exyurock' },
-      'naxidigital-hype128ssl.streaming.rs': { page: 'hype', station: 'hype' },
-      'naxidigital-70s128ssl.streaming.rs': { page: '70s', station: '70e' },
-      'naxidigital-chillwave128ssl.streaming.rs': { page: 'chillwave', station: 'chillwave' },
-      'naxidigital-instrumental128.streaming.rs': { page: 'instrumental', station: 'instrumental' },
-      'naxidigital-fresh128ssl.streaming.rs': { page: 'fresh', station: 'fresh' },
-      'naxidigital-boem128ssl.streaming.rs': { page: 'boem', station: 'boem' },
-      'naxidigital-adore128ssl.streaming.rs': { page: 'adore', station: 'adore' },
-      'naxidigital-slager128ssl.streaming.rs': { page: 'slager', station: 'slager' },
-      'naxidigital-millennium128ssl.streaming.rs': { page: 'millennium', station: 'millennium' },
-      'naxidigital-fitness128ssl.streaming.rs': { page: 'fitness', station: 'fitness' },
-      'naxidigital-kids128ssl.streaming.rs': { page: 'kids', station: 'kids' },
-      'naxidigital-xmas128.streaming.rs': { page: 'xmas', station: 'xmas' }
+    console.log('Handling NAXI station:', stationUrl);
+    
+    // Map streaming hosts to their corresponding web pages
+    const hostToPageMap = {
+	  'naxi128.streaming.rs:9152': 'live',
+      'naxidigital-rnb128ssl.streaming.rs': 'rnb',
+      'naxidigital-rock128ssl.streaming.rs': 'rock',
+      'naxidigital-house128ssl.streaming.rs': 'house',
+      'naxidigital-cafe128ssl.streaming.rs': 'cafe',
+      'naxidigital-jazz128ssl.streaming.rs': 'jazz',
+      'naxidigital-classic128ssl.streaming.rs': 'classic',
+      'naxidigital-80s128ssl.streaming.rs': '80s',
+      'naxidigital-90s128ssl.streaming.rs': '90s',
+      'naxidigital-reggae128.streaming.rs': 'reggae',
+      'naxidigital-blues128ssl.streaming.rs': 'blues',
+      'naxidigital-chill128ssl.streaming.rs': 'chillout',
+      'naxidigital-lounge128ssl.streaming.rs': 'lounge',
+      'naxidigital-dance128ssl.streaming.rs': 'dance',
+      'naxidigital-funk128ssl.streaming.rs': 'funk',
+      'naxidigital-disco128ssl.streaming.rs': 'disco',
+      'naxidigital-evergreen128ssl.streaming.rs': 'evergreen',
+      'naxidigital-mix128ssl.streaming.rs': 'mix',
+      'naxidigital-gold128ssl.streaming.rs': 'gold',
+      'naxidigital-latino128ssl.streaming.rs': 'latino',
+      'naxidigital-love128ssl.streaming.rs': 'love',
+      'naxidigital-clubbing128ssl.streaming.rs': 'clubbing',
+      'naxidigital-exyu128ssl.streaming.rs': 'exyu',
+      'naxidigital-exyurock128ssl.streaming.rs': 'exyurock',
+      'naxidigital-hype128ssl.streaming.rs': 'hype',
+      'naxidigital-70s128ssl.streaming.rs': '70s',
+      'naxidigital-chillwave128ssl.streaming.rs': 'chillwave',
+      'naxidigital-instrumental128.streaming.rs': 'instrumental',
+      'naxidigital-fresh128ssl.streaming.rs': 'fresh',
+      'naxidigital-boem128ssl.streaming.rs': 'boem',
+      'naxidigital-adore128ssl.streaming.rs': 'adore',
+      'naxidigital-slager128ssl.streaming.rs': 'slager',
+      'naxidigital-millennium128ssl.streaming.rs': 'millennium',
+      'naxidigital-fitness128ssl.streaming.rs': 'fitness',
+      'naxidigital-kids128ssl.streaming.rs': 'kids',
+      'naxidigital-xmas128.streaming.rs': 'xmas'
     };
     
     // Extract host from station URL
     const urlObj = new URL(stationUrl);
     const host = urlObj.hostname;
     
-    // Determine the web page and data-station value
-    let pageInfo = { page: 'index', station: 'naxi' }; // default
-    for (const [streamHost, info] of Object.entries(hostToInfoMap)) {
+    // Determine the web page to scrape
+    let webPage = 'index'; // default
+    for (const [streamHost, page] of Object.entries(hostToPageMap)) {
       if (host.includes(streamHost.split('.')[0])) {
-        pageInfo = info;
+        webPage = page;
         break;
       }
     }
     
     // Special handling for index page
-    const webUrl = pageInfo.page === 'index' 
+    const webUrl = webPage === 'index' 
       ? 'https://www.naxi.rs/' 
-      : `https://www.naxi.rs/${pageInfo.page}`;
+      : `https://www.naxi.rs/${webPage}`;
+      
+    console.log('Scraping URL:', webUrl);
     
     // Scrape the web page
-    const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
+    const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl);
 
     if (nowPlaying) {
+      console.log('Found metadata:', nowPlaying);
       return createSuccessResponse(nowPlaying, {
         source: 'naxi-web',
         bitrate: '128',
@@ -217,16 +200,20 @@ async function handleNaxiRadio(stationUrl) {
       });
     }
 
+    console.log('No metadata found for NAXI station');
     return createErrorResponse('Naxi: No metadata found', 404);
     
   } catch (error) {
+    console.error('Error fetching Naxi metadata:', error);
     return createErrorResponse(`Naxi: ${error.message}`, 500);
   }
 }
 
 // Web scraping function for Naxi.rs with better error handling
-async function tryNaxiWebScraping(url, stationUrl, dataStation) {
+async function tryNaxiWebScraping(url, stationUrl) {
   try {
+    console.log('Fetching NAXI page:', url);
+    
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -244,11 +231,15 @@ async function tryNaxiWebScraping(url, stationUrl, dataStation) {
     }
 
     const html = await response.text();
-    const result = extractNaxiNowPlaying(html, dataStation, url);
+    console.log('Received HTML length:', html.length);
+    
+    const result = extractNaxiNowPlaying(html, stationUrl, url);
+    console.log('Extracted result:', result);
     
     return result;
   } catch (error) {
-    throw error;
+    console.error(`Error with Naxi web scraping (${url}):`, error);
+    return null;
   }
 }
 
@@ -263,36 +254,69 @@ function isNaxiStation(stationUrl) {
   return cleanUrl.includes('naxi');
 }
 
-// Extract currently playing song from Naxi HTML - ONLY PATTERN 3
-function extractNaxiNowPlaying(html, dataStation, webUrl) {
+// Extract currently playing song from Naxi HTML - COMPLETE REWRITE
+function extractNaxiNowPlaying(html, stationUrl, webUrl) {
   try {
-    // ONLY use pattern 3 as requested - separate extraction to avoid recently played songs
-    let artist = null;
-    let title = null;
+    console.log('Extracting metadata from HTML for:', webUrl);
     
-    // Pattern for artist-name (only the first match to avoid recently played)
-    const artistPattern = /<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i;
-    const artistMatch = html.match(artistPattern);
-    if (artistMatch && artistMatch[1]) {
-      artist = artistMatch[1].trim();
+    // Try multiple patterns in order of specificity
+    
+    // Pattern 1: Look for the specific structure you mentioned
+    // First, try to find data based on the web page
+    const urlObj = new URL(webUrl);
+    const pathParts = urlObj.pathname.split('/').filter(Boolean);
+    const category = pathParts[0] || 'index';
+    
+    console.log('Category:', category);
+    
+    // For category pages, look for specific elements
+    if (category !== 'index') {
+      // Pattern 1: The exact structure you specified
+      const pattern1 = /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*[^>]*>([^<]+)<\/p>/i;
+      let match = html.match(pattern1);
+      
+      if (match && match[1] && match[2]) {
+        const artist = match[1].trim();
+        const title = match[2].trim();
+        console.log('Pattern 1 matched:', artist, '-', title);
+        if (artist && title) {
+          return `${artist} - ${title}`;
+        }
+      }
+      
+      // Pattern 2: More flexible pattern for current-program__data
+      const pattern2 = new RegExp(
+        `<div[^>]*class="[^"]*current-program__data[^"]*"[^>]*>\\s*<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\\/p>\\s*<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\\/p>`,
+        'gi'
+      );
+      match = pattern2.exec(html);
+      
+      if (match && match[1] && match[2]) {
+        const artist = match[1].trim();
+        const title = match[2].trim();
+        console.log('Pattern 2 matched:', artist, '-', title);
+        if (artist && title) {
+          return `${artist} - ${title}`;
+        }
+      }
     }
     
-    // Pattern for song-title with specific data-station (only the first match)
-    const titlePattern = new RegExp(`<p[^>]*class="[^"]*song-title[^"]*"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\\/p>`, 'i');
-    const titleMatch = html.match(titlePattern);
-    if (titleMatch && titleMatch[1]) {
-      title = titleMatch[1].trim();
-    }
+    // Pattern 3: Look for any artist-name and song-title classes in proximity
+    const artistMatches = [...html.matchAll(/<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/gi)];
+    const titleMatches = [...html.matchAll(/<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/gi)];
     
-    // If we found both, return the result
-    if (artist && title) {
-      return `${artist} - ${title}`;
-    }
+    console.log('Found artist matches:', artistMatches.length);
+    console.log('Found title matches:', titleMatches.length);
     
-    return null;
-  } catch (e) {
-    return null;
-  }
+    if (artistMatches.length > 0 && titleMatches.length > 0) {
+      // Take the first match of each
+      const artist = artistMatches[0][1].trim();
+      const title = titleMatches[0][1].trim();
+      console.log('Pattern 3 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
 }
 
 async function streamMetadataMonitor(response, metaInt) {
@@ -322,6 +346,7 @@ async function streamMetadataMonitor(response, metaInt) {
 
     return metadataFound;
   } catch (e) {
+    console.error('Metadata monitoring error:', e);
     return null;
   }
 }
@@ -344,7 +369,7 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
         metadataString = new TextDecoder(encoding).decode(metadataBytes);
         if (metadataString.includes('StreamTitle=')) break;
       } catch (e) {
-        // Ignore encoding errors
+        console.log(`Failed decoding with ${encoding}`);
       }
     }
     
@@ -369,6 +394,7 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
     
     return metadataString.trim() || null;
   } catch (e) {
+    console.log('Metadata parsing error:', e);
     return null;
   }
 }
@@ -394,6 +420,7 @@ async function handleRadioParadise(stationUrl) {
     let channel = Object.keys(stationMap).find(key => cleanUrl.includes(key));
 
     if (!channel) {
+      console.error('Radio Paradise station not recognized:', cleanUrl);
       throw new Error('Unknown Radio Paradise station');
     }
 
@@ -415,6 +442,7 @@ async function handleRadioParadise(stationUrl) {
     const title = `${data.artist} - ${data.title}`;
     return createSuccessResponse(title, qualityInfo);
   } catch (e) {
+    console.error('Radio Paradise metadata error:', e);
     return createErrorResponse(`Radio Paradise: ${e.message}`, 503, qualityInfo);
   }
 }
@@ -428,6 +456,7 @@ async function tryAlternativeMethods(response, qualityInfo) {
 
     return null;
   } catch (e) {
+    console.error('Alternative metadata extraction error:', e);
     return null;
   }
 }
@@ -443,7 +472,7 @@ async function parseShoutcastV1Metadata(response) {
       return matches[1].trim();
     }
   } catch (e) {
-    // Ignore errors
+    console.log('Shoutcast v1 metadata parsing error:', e);
   }
   return null;
 }
