@@ -122,13 +122,14 @@ function normalizeUrlForComparison(url) {
     .toLowerCase();
 }
 
-// Handle Naxi radio stations - FOCUSED APPROACH
+// Handle Naxi radio stations - SIMPLIFIED FOCUSED APPROACH
 async function handleNaxiRadio(stationUrl) {
   try {
     console.log('Handling NAXI station:', stationUrl);
     
     // Map streaming hosts to their corresponding web pages and data-station values
     const hostToInfoMap = {
+	  'naxi128.streaming.rs:9152': { page: 'live', station: 'naxi' },
       'naxidigital-rnb128ssl.streaming.rs': { page: 'rnb', station: 'rnb' },
       'naxidigital-rock128ssl.streaming.rs': { page: 'rock', station: 'rock' },
       'naxidigital-house128ssl.streaming.rs': { page: 'house', station: 'house' },
@@ -232,7 +233,7 @@ async function tryNaxiWebScraping(url, stationUrl, dataStation) {
     }
 
     const html = await response.text();
-    console.log('Received HTML length:', html.length);
+    console.log('Received HTML length:', html);
     
     const result = extractNaxiNowPlaying(html, dataStation, url);
     console.log('Extracted result:', result);
@@ -255,17 +256,17 @@ function isNaxiStation(stationUrl) {
   return cleanUrl.includes('naxi');
 }
 
-// Extract currently playing song from Naxi HTML - FOCUSED APPROACH
+// Extract currently playing song from Naxi HTML - ONLY PATTERN 3
 function extractNaxiNowPlaying(html, dataStation, webUrl) {
   try {
     console.log('Extracting metadata from HTML for:', webUrl);
     console.log('Looking for data-station:', dataStation);
     
-    // Try to find artist and title separately as you suggested
+    // ONLY use pattern 3 as requested - separate extraction to avoid recently played songs
     let artist = null;
     let title = null;
     
-    // Pattern for artist-name
+    // Pattern for artist-name (only the first match to avoid recently played)
     const artistPattern = /<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i;
     const artistMatch = html.match(artistPattern);
     if (artistMatch && artistMatch[1]) {
@@ -273,22 +274,12 @@ function extractNaxiNowPlaying(html, dataStation, webUrl) {
       console.log('Found artist:', artist);
     }
     
-    // Pattern for song-title with specific data-station
-    const titlePattern = new RegExp(`<p[^>]*class="[^"]*song-title[^"]*"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\/p>`, 'i');
+    // Pattern for song-title with specific data-station (only the first match)
+    const titlePattern = new RegExp(`<p[^>]*class="[^"]*song-title[^"]*"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\\/p>`, 'i');
     const titleMatch = html.match(titlePattern);
     if (titleMatch && titleMatch[1]) {
       title = titleMatch[1].trim();
       console.log('Found title with data-station:', title);
-    }
-    
-    // Fallback: look for any song-title if specific one not found
-    if (!title) {
-      const fallbackTitlePattern = /<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/i;
-      const fallbackTitleMatch = html.match(fallbackTitlePattern);
-      if (fallbackTitleMatch && fallbackTitleMatch[1]) {
-        title = fallbackTitleMatch[1].trim();
-        console.log('Found fallback title:', title);
-      }
     }
     
     // If we found both, return the result
@@ -296,34 +287,7 @@ function extractNaxiNowPlaying(html, dataStation, webUrl) {
       return `${artist} - ${title}`;
     }
     
-    // Try combined pattern (your specific example)
-    const combinedPattern = new RegExp(
-      `<p class="artist-name">([^<]+)<\\/p>\\s*<p class="song-title"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\\/p>`,
-      'i'
-    );
-    const combinedMatch = html.match(combinedPattern);
-    
-    if (combinedMatch && combinedMatch[1] && combinedMatch[2]) {
-      const artist = combinedMatch[1].trim();
-      const title = combinedMatch[2].trim();
-      console.log('Combined pattern matched:', artist, '-', title);
-      return `${artist} - ${title}`;
-    }
-    
-    // Fallback to any artist-name and song-title in proximity
-    if (!artist || !title) {
-      const artistMatches = [...html.matchAll(/<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/gi)];
-      const titleMatches = [...html.matchAll(/<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/gi)];
-      
-      if (artistMatches.length > 0 && titleMatches.length > 0) {
-        artist = artist || artistMatches[0][1].trim();
-        title = title || titleMatches[0][1].trim();
-        console.log('Proximity match:', artist, '-', title);
-        return `${artist} - ${title}`;
-      }
-    }
-    
-    console.log('No artist and title found');
+    console.log('Pattern 3: No artist and title found');
     return null;
   } catch (e) {
     console.error('Naxi parsing error:', e);
