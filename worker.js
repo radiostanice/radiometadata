@@ -1,4 +1,3 @@
-
 // Station Handlers Registry
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
@@ -128,10 +127,6 @@ async function handleNaxiRadio(stationUrl) {
   try {
     console.log('Handling NAXI station:', stationUrl);
     
-    // Get the actual streaming URL to determine which web page to scrape
-    const streamingUrl = new URL(stationUrl);
-    const host = streamingUrl.hostname;
-    
     // Map streaming hosts to their corresponding web pages
     const hostToPageMap = {
       'naxidigital-rnb128ssl.streaming.rs': 'rnb',
@@ -154,8 +149,26 @@ async function handleNaxiRadio(stationUrl) {
       'naxidigital-gold128ssl.streaming.rs': 'gold',
       'naxidigital-latino128ssl.streaming.rs': 'latino',
       'naxidigital-love128ssl.streaming.rs': 'love',
-      'naxidigital-clubbing128ssl.streaming.rs': 'clubbing'
+      'naxidigital-clubbing128ssl.streaming.rs': 'clubbing',
+      'naxidigital-exyu128ssl.streaming.rs': 'exyu',
+      'naxidigital-exyurock128ssl.streaming.rs': 'exyurock',
+      'naxidigital-hype128ssl.streaming.rs': 'hype',
+      'naxidigital-70s128ssl.streaming.rs': '70s',
+      'naxidigital-chillwave128ssl.streaming.rs': 'chillwave',
+      'naxidigital-instrumental128.streaming.rs': 'instrumental',
+      'naxidigital-fresh128ssl.streaming.rs': 'fresh',
+      'naxidigital-boem128ssl.streaming.rs': 'boem',
+      'naxidigital-adore128ssl.streaming.rs': 'adore',
+      'naxidigital-slager128ssl.streaming.rs': 'slager',
+      'naxidigital-millennium128ssl.streaming.rs': 'millennium',
+      'naxidigital-fitness128ssl.streaming.rs': 'fitness',
+      'naxidigital-kids128ssl.streaming.rs': 'kids',
+      'naxidigital-xmas128.streaming.rs': 'xmas'
     };
+    
+    // Extract host from station URL
+    const urlObj = new URL(stationUrl);
+    const host = urlObj.hostname;
     
     // Determine the web page to scrape
     let webPage = 'index'; // default
@@ -166,7 +179,11 @@ async function handleNaxiRadio(stationUrl) {
       }
     }
     
-    const webUrl = `https://www.naxi.rs/${webPage}`;
+    // Special handling for index page
+    const webUrl = webPage === 'index' 
+      ? 'https://www.naxi.rs/' 
+      : `https://www.naxi.rs/${webPage}`;
+      
     console.log('Scraping URL:', webUrl);
     
     // Scrape the web page
@@ -191,7 +208,7 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-// Web scraping function for Naxi.rs with retry logic
+// Web scraping function for Naxi.rs with better error handling
 async function tryNaxiWebScraping(url, stationUrl) {
   try {
     console.log('Fetching NAXI page:', url);
@@ -200,7 +217,7 @@ async function tryNaxiWebScraping(url, stationUrl) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9,sr;q=0.8',
         'Cache-Control': 'no-cache'
       },
       cf: {
@@ -215,7 +232,7 @@ async function tryNaxiWebScraping(url, stationUrl) {
     const html = await response.text();
     console.log('Received HTML length:', html.length);
     
-    const result = extractNaxiNowPlaying(html, stationUrl);
+    const result = extractNaxiNowPlaying(html, stationUrl, url);
     console.log('Extracted result:', result);
     
     return result;
@@ -237,35 +254,49 @@ function isNaxiStation(stationUrl) {
 }
 
 // Extract currently playing song from Naxi HTML - COMPLETE REWRITE
-function extractNaxiNowPlaying(html, stationUrl) {
+function extractNaxiNowPlaying(html, stationUrl, webUrl) {
   try {
-    console.log('Extracting metadata from HTML...');
+    console.log('Extracting metadata from HTML for:', webUrl);
     
     // Try multiple patterns in order of specificity
     
-    // Pattern 1: The structure you specified
-    const pattern1 = /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*[^>]*>([^<]+)<\/p>/i;
-    let match = html.match(pattern1);
+    // Pattern 1: Look for the specific structure you mentioned
+    // First, try to find data based on the web page
+    const urlObj = new URL(webUrl);
+    const pathParts = urlObj.pathname.split('/').filter(Boolean);
+    const category = pathParts[0] || 'index';
     
-    if (match && match[1] && match[2]) {
-      const artist = match[1].trim();
-      const title = match[2].trim();
-      console.log('Pattern 1 matched:', artist, '-', title);
-      if (artist && title) {
-        return `${artist} - ${title}`;
+    console.log('Category:', category);
+    
+    // For category pages, look for specific elements
+    if (category !== 'index') {
+      // Pattern 1: The exact structure you specified
+      const pattern1 = /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*[^>]*>([^<]+)<\/p>/i;
+      let match = html.match(pattern1);
+      
+      if (match && match[1] && match[2]) {
+        const artist = match[1].trim();
+        const title = match[2].trim();
+        console.log('Pattern 1 matched:', artist, '-', title);
+        if (artist && title) {
+          return `${artist} - ${title}`;
+        }
       }
-    }
-    
-    // Pattern 2: More flexible pattern for current-program__data
-    const pattern2 = /<div[^>]*class="[^"]*current-program__data[^"]*"[^>]*>\s*<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>\s*<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/gi;
-    match = pattern2.exec(html);
-    
-    if (match && match[1] && match[2]) {
-      const artist = match[1].trim();
-      const title = match[2].trim();
-      console.log('Pattern 2 matched:', artist, '-', title);
-      if (artist && title) {
-        return `${artist} - ${title}`;
+      
+      // Pattern 2: More flexible pattern for current-program__data
+      const pattern2 = new RegExp(
+        `<div[^>]*class="[^"]*current-program__data[^"]*"[^>]*>\\s*<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\\/p>\\s*<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\\/p>`,
+        'gi'
+      );
+      match = pattern2.exec(html);
+      
+      if (match && match[1] && match[2]) {
+        const artist = match[1].trim();
+        const title = match[2].trim();
+        console.log('Pattern 2 matched:', artist, '-', title);
+        if (artist && title) {
+          return `${artist} - ${title}`;
+        }
       }
     }
     
@@ -288,7 +319,7 @@ function extractNaxiNowPlaying(html, stationUrl) {
     
     // Pattern 4: Look for data-program elements
     const pattern4 = /<div[^>]*data-program[^>]*>\s*<div[^>]*artist[^>]*>([^<]+)<\/div>\s*<div[^>]*title[^>]*>([^<]+)<\/div>/i;
-    match = html.match(pattern4);
+    let match = html.match(pattern4);
     
     if (match && match[1] && match[2]) {
       const artist = match[1].trim();
@@ -299,7 +330,7 @@ function extractNaxiNowPlaying(html, stationUrl) {
       }
     }
     
-    // Pattern 5: Generic pattern looking for "Trenutno" (Currently Playing in Serbian)
+    // Pattern 5: Look for "Trenutno" (Currently Playing in Serbian)
     const pattern5 = /Trenutno:[\s\S]*?<strong>([^<]+)<\/strong>[\s\S]*?-[\s\S]*?<strong>([^<]+)<\/strong>/i;
     match = html.match(pattern5);
     
@@ -307,6 +338,32 @@ function extractNaxiNowPlaying(html, stationUrl) {
       const artist = match[1].trim();
       const title = match[2].trim();
       console.log('Pattern 5 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    // Pattern 6: Look for "Now Playing" text
+    const pattern6 = /Now Playing:[\s\S]*?<strong>([^<]+)<\/strong>[\s\S]*?-[\s\S]*?<strong>([^<]+)<\/strong>/i;
+    match = html.match(pattern6);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      console.log('Pattern 6 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    // Pattern 7: Very generic pattern looking for artist and title in the same container
+    const pattern7 = /<div[^>]*class="[^"]*now-playing[^"]*"[^>]*>\s*<span[^>]*>([^<]+)<\/span>\s*<span[^>]*>([^<]+)<\/span>/i;
+    match = html.match(pattern7);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      console.log('Pattern 7 matched:', artist, '-', title);
       if (artist && title) {
         return `${artist} - ${title}`;
       }
