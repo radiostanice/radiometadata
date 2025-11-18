@@ -8,14 +8,16 @@ const STATION_HANDLERS = {
 export default {
   async fetch(request, env) {
     // Handle CORS preflight requests
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+    };
+
     if (request.method === 'OPTIONS') {
       return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-          'Access-Control-Max-Age': '86400',
-        }
+        headers: corsHeaders
       });
     }
 
@@ -24,7 +26,16 @@ export default {
     const stationUrl = url.searchParams.get('url');
     
     if (!stationUrl) {
-      return createErrorResponse('Missing station URL parameter', 400);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Missing station URL parameter'
+      }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        }
+      });
     }
 
     try {
@@ -34,10 +45,16 @@ export default {
 
     } catch (error) {
       console.error('Metadata fetch error:', error);
-      return createErrorResponse(
-        error.name === 'AbortError' ? 'Request timeout' : error.message, 
-        500
-      );
+      return new Response(JSON.stringify({
+        success: false,
+        error: error.name === 'AbortError' ? 'Request timeout' : error.message
+      }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        }
+      });
     }
   }
 }
@@ -79,37 +96,42 @@ async function handleDefaultStation(stationUrl) {
   const timeoutId = setTimeout(() => controller.abort(), 3000);
   fetchOptions.signal = controller.signal;
 
-  const response = await fetch(stationUrl, fetchOptions);
-  clearTimeout(timeoutId);
+  try {
+    const response = await fetch(stationUrl, fetchOptions);
+    clearTimeout(timeoutId);
 
-  const qualityInfo = {
-    bitrate: response.headers.get('icy-br') || null,
-    metaInterval: response.headers.get('icy-metaint'),
-    contentType: response.headers.get('content-type'),
-    server: response.headers.get('server'),
-    responseTime: Date.now() - startTime,
-    icyHeadersPresent: response.headers.get('icy-metaint') !== null
-  };
+    const qualityInfo = {
+      bitrate: response.headers.get('icy-br') || null,
+      metaInterval: response.headers.get('icy-metaint'),
+      contentType: response.headers.get('content-type'),
+      server: response.headers.get('server'),
+      responseTime: Date.now() - startTime,
+      icyHeadersPresent: response.headers.get('icy-metaint') !== null
+    };
 
-  // Check if we have ICY headers for metadata
-  const icyTitle = response.headers.get('icy-title');
-  if (icyTitle && !isLikelyStationName(icyTitle)) {
-    return createSuccessResponse(icyTitle, qualityInfo);
-  }
-
-  // Parse metadata from stream if meta interval exists
-  const metaInt = parseInt(response.headers.get('icy-metaint'));
-  if (metaInt) {
-    const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
-    if (currentMetadata) {
-      return createSuccessResponse(currentMetadata, qualityInfo);
+    // Check if we have ICY headers for metadata
+    const icyTitle = response.headers.get('icy-title');
+    if (icyTitle && !isLikelyStationName(icyTitle)) {
+      return createSuccessResponse(icyTitle, qualityInfo);
     }
-  }
 
-  // If no metadata found, try alternative methods
-  const metadata = await tryAlternativeMethods(response, qualityInfo);
-  
-  return createSuccessResponse(metadata, qualityInfo);
+    // Parse metadata from stream if meta interval exists
+    const metaInt = parseInt(response.headers.get('icy-metaint'));
+    if (metaInt) {
+      const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
+      if (currentMetadata) {
+        return createSuccessResponse(currentMetadata, qualityInfo);
+      }
+    }
+
+    // If no metadata found, try alternative methods
+    const metadata = await tryAlternativeMethods(response, qualityInfo);
+    
+    return createSuccessResponse(metadata, qualityInfo);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
 }
 
 // Helper function for URL normalization
@@ -125,11 +147,8 @@ function normalizeUrlForComparison(url) {
 // Handle Naxi radio stations - SIMPLIFIED FOCUSED APPROACH
 async function handleNaxiRadio(stationUrl) {
   try {
-    console.log('Handling NAXI station:', stationUrl);
-    
     // Map streaming hosts to their corresponding web pages and data-station values
     const hostToInfoMap = {
-	  'naxi128.streaming.rs:9152': { page: 'live', station: 'naxi' },
       'naxidigital-rnb128ssl.streaming.rs': { page: 'rnb', station: 'rnb' },
       'naxidigital-rock128ssl.streaming.rs': { page: 'rock', station: 'rock' },
       'naxidigital-house128ssl.streaming.rs': { page: 'house', station: 'house' },
@@ -184,15 +203,11 @@ async function handleNaxiRadio(stationUrl) {
     const webUrl = pageInfo.page === 'index' 
       ? 'https://www.naxi.rs/' 
       : `https://www.naxi.rs/${pageInfo.page}`;
-      
-    console.log('Scraping URL:', webUrl);
-    console.log('Looking for data-station:', pageInfo.station);
     
     // Scrape the web page
     const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
 
     if (nowPlaying) {
-      console.log('Found metadata:', nowPlaying);
       return createSuccessResponse(nowPlaying, {
         source: 'naxi-web',
         bitrate: '128',
@@ -201,11 +216,9 @@ async function handleNaxiRadio(stationUrl) {
       });
     }
 
-    console.log('No metadata found for NAXI station');
     return createErrorResponse('Naxi: No metadata found', 404);
     
   } catch (error) {
-    console.error('Error fetching Naxi metadata:', error);
     return createErrorResponse(`Naxi: ${error.message}`, 500);
   }
 }
@@ -213,9 +226,6 @@ async function handleNaxiRadio(stationUrl) {
 // Web scraping function for Naxi.rs with better error handling
 async function tryNaxiWebScraping(url, stationUrl, dataStation) {
   try {
-    console.log('Fetching NAXI page:', url);
-    console.log('Looking for data-station value:', dataStation);
-    
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -233,15 +243,11 @@ async function tryNaxiWebScraping(url, stationUrl, dataStation) {
     }
 
     const html = await response.text();
-    console.log('Received HTML length:', html);
-    
     const result = extractNaxiNowPlaying(html, dataStation, url);
-    console.log('Extracted result:', result);
     
     return result;
   } catch (error) {
-    console.error(`Error with Naxi web scraping (${url}):`, error);
-    return null;
+    throw error;
   }
 }
 
@@ -259,9 +265,6 @@ function isNaxiStation(stationUrl) {
 // Extract currently playing song from Naxi HTML - ONLY PATTERN 3
 function extractNaxiNowPlaying(html, dataStation, webUrl) {
   try {
-    console.log('Extracting metadata from HTML for:', webUrl);
-    console.log('Looking for data-station:', dataStation);
-    
     // ONLY use pattern 3 as requested - separate extraction to avoid recently played songs
     let artist = null;
     let title = null;
@@ -271,7 +274,6 @@ function extractNaxiNowPlaying(html, dataStation, webUrl) {
     const artistMatch = html.match(artistPattern);
     if (artistMatch && artistMatch[1]) {
       artist = artistMatch[1].trim();
-      console.log('Found artist:', artist);
     }
     
     // Pattern for song-title with specific data-station (only the first match)
@@ -279,7 +281,6 @@ function extractNaxiNowPlaying(html, dataStation, webUrl) {
     const titleMatch = html.match(titlePattern);
     if (titleMatch && titleMatch[1]) {
       title = titleMatch[1].trim();
-      console.log('Found title with data-station:', title);
     }
     
     // If we found both, return the result
@@ -287,10 +288,8 @@ function extractNaxiNowPlaying(html, dataStation, webUrl) {
       return `${artist} - ${title}`;
     }
     
-    console.log('Pattern 3: No artist and title found');
     return null;
   } catch (e) {
-    console.error('Naxi parsing error:', e);
     return null;
   }
 }
@@ -322,7 +321,6 @@ async function streamMetadataMonitor(response, metaInt) {
 
     return metadataFound;
   } catch (e) {
-    console.error('Metadata monitoring error:', e);
     return null;
   }
 }
@@ -345,7 +343,7 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
         metadataString = new TextDecoder(encoding).decode(metadataBytes);
         if (metadataString.includes('StreamTitle=')) break;
       } catch (e) {
-        console.log(`Failed decoding with ${encoding}`);
+        // Ignore encoding errors
       }
     }
     
@@ -370,7 +368,6 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
     
     return metadataString.trim() || null;
   } catch (e) {
-    console.log('Metadata parsing error:', e);
     return null;
   }
 }
@@ -396,7 +393,6 @@ async function handleRadioParadise(stationUrl) {
     let channel = Object.keys(stationMap).find(key => cleanUrl.includes(key));
 
     if (!channel) {
-      console.error('Radio Paradise station not recognized:', cleanUrl);
       throw new Error('Unknown Radio Paradise station');
     }
 
@@ -418,7 +414,6 @@ async function handleRadioParadise(stationUrl) {
     const title = `${data.artist} - ${data.title}`;
     return createSuccessResponse(title, qualityInfo);
   } catch (e) {
-    console.error('Radio Paradise metadata error:', e);
     return createErrorResponse(`Radio Paradise: ${e.message}`, 503, qualityInfo);
   }
 }
@@ -432,7 +427,6 @@ async function tryAlternativeMethods(response, qualityInfo) {
 
     return null;
   } catch (e) {
-    console.error('Alternative metadata extraction error:', e);
     return null;
   }
 }
@@ -448,7 +442,7 @@ async function parseShoutcastV1Metadata(response) {
       return matches[1].trim();
     }
   } catch (e) {
-    console.log('Shoutcast v1 metadata parsing error:', e);
+    // Ignore errors
   }
   return null;
 }
