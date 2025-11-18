@@ -58,7 +58,7 @@ function selectHandler(stationUrl) {
   return STATION_HANDLERS.default;
 }
 
-// Default station handler (unchanged)
+// Default station handler
 async function handleDefaultStation(stationUrl) {
   const fetchOptions = {
     method: 'GET',
@@ -123,21 +123,57 @@ function normalizeUrlForComparison(url) {
     .toLowerCase();
 }
 
-// Handle Naxi radio stations
+// Handle Naxi radio stations - COMPLETE REWRITE
 async function handleNaxiRadio(stationUrl) {
   try {
-    // Extract category from URL (e.g., naxi.rs/rnb -> rnb)
-    const urlObj = new URL(stationUrl);
-    const pathParts = urlObj.pathname.split('/').filter(Boolean);
-    const category = pathParts[0] || 'index'; // Default to index page
+    console.log('Handling NAXI station:', stationUrl);
     
-    // Construct the web URL
-    const webUrl = `https://www.${urlObj.hostname}${urlObj.pathname}`;
+    // Get the actual streaming URL to determine which web page to scrape
+    const streamingUrl = new URL(stationUrl);
+    const host = streamingUrl.hostname;
     
-    // Scrape the specific category page
+    // Map streaming hosts to their corresponding web pages
+    const hostToPageMap = {
+      'naxidigital-rnb128ssl.streaming.rs': 'rnb',
+      'naxidigital-rock128ssl.streaming.rs': 'rock',
+      'naxidigital-house128ssl.streaming.rs': 'house',
+      'naxidigital-cafe128ssl.streaming.rs': 'cafe',
+      'naxidigital-jazz128ssl.streaming.rs': 'jazz',
+      'naxidigital-classic128ssl.streaming.rs': 'classic',
+      'naxidigital-80s128ssl.streaming.rs': '80s',
+      'naxidigital-90s128ssl.streaming.rs': '90s',
+      'naxidigital-reggae128.streaming.rs': 'reggae',
+      'naxidigital-blues128ssl.streaming.rs': 'blues',
+      'naxidigital-chill128ssl.streaming.rs': 'chillout',
+      'naxidigital-lounge128ssl.streaming.rs': 'lounge',
+      'naxidigital-dance128ssl.streaming.rs': 'dance',
+      'naxidigital-funk128ssl.streaming.rs': 'funk',
+      'naxidigital-disco128ssl.streaming.rs': 'disco',
+      'naxidigital-evergreen128ssl.streaming.rs': 'evergreen',
+      'naxidigital-mix128ssl.streaming.rs': 'mix',
+      'naxidigital-gold128ssl.streaming.rs': 'gold',
+      'naxidigital-latino128ssl.streaming.rs': 'latino',
+      'naxidigital-love128ssl.streaming.rs': 'love',
+      'naxidigital-clubbing128ssl.streaming.rs': 'clubbing'
+    };
+    
+    // Determine the web page to scrape
+    let webPage = 'index'; // default
+    for (const [streamHost, page] of Object.entries(hostToPageMap)) {
+      if (host.includes(streamHost.split('.')[0])) {
+        webPage = page;
+        break;
+      }
+    }
+    
+    const webUrl = `https://www.naxi.rs/${webPage}`;
+    console.log('Scraping URL:', webUrl);
+    
+    // Scrape the web page
     const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl);
 
     if (nowPlaying) {
+      console.log('Found metadata:', nowPlaying);
       return createSuccessResponse(nowPlaying, {
         source: 'naxi-web',
         bitrate: '128',
@@ -146,6 +182,7 @@ async function handleNaxiRadio(stationUrl) {
       });
     }
 
+    console.log('No metadata found for NAXI station');
     return createErrorResponse('Naxi: No metadata found', 404);
     
   } catch (error) {
@@ -154,16 +191,20 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-// Web scraping function specifically for Naxi.rs pages
+// Web scraping function for Naxi.rs with retry logic
 async function tryNaxiWebScraping(url, stationUrl) {
   try {
+    console.log('Fetching NAXI page:', url);
+    
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache'
       },
       cf: {
-        cacheTtl: 10
+        cacheTtl: 0 // Disable caching for fresh data
       }
     });
 
@@ -172,7 +213,12 @@ async function tryNaxiWebScraping(url, stationUrl) {
     }
 
     const html = await response.text();
-    return extractNaxiNowPlaying(html, stationUrl);
+    console.log('Received HTML length:', html.length);
+    
+    const result = extractNaxiNowPlaying(html, stationUrl);
+    console.log('Extracted result:', result);
+    
+    return result;
   } catch (error) {
     console.error(`Error with Naxi web scraping (${url}):`, error);
     return null;
@@ -187,165 +233,86 @@ function isNaxiStation(stationUrl) {
     .replace(';*.mp3', '')
     .split('/')[0];
     
-  return cleanUrl.includes('naxi.rs');
+  return cleanUrl.includes('naxi');
 }
 
-// Extract currently playing song from Naxi HTML with enhanced structure matching
+// Extract currently playing song from Naxi HTML - COMPLETE REWRITE
 function extractNaxiNowPlaying(html, stationUrl) {
   try {
-    // Extract category from URL
-    const urlObj = new URL(stationUrl);
-    const pathParts = urlObj.pathname.split('/').filter(Boolean);
-    const category = pathParts[0] || 'index';
+    console.log('Extracting metadata from HTML...');
     
-    // For category pages, look for various possible structures
-    if (category !== 'index') {
-      // Try the structure you mentioned first
-      let pattern = /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*>([^<]+)<\/p>/i;
-      let match = html.match(pattern);
-      
-      if (match && match[1] && match[2]) {
-        const artist = match[1].trim();
-        const title = match[2].trim();
-        
-        if (artist && title) {
-          return `${artist} - ${title}`;
-        }
-      }
-      
-      // Try alternative patterns in case the class names are different
-      const patterns = [
-        // Pattern 1: current-program__data with data- attributes
-        /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*data-station="[^"]*"[^>]*>([^<]+)<\/p>/i,
-        
-        // Pattern 2: Simpler structure with data-program class
-        /<div[^>]*data-program[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*>([^<]+)<\/p>/i,
-        
-        // Pattern 3: More generic pattern looking for artist and title classes
-        /<div[^>]*class="[^"]*current-program[^"]*"[^>]*>\s*<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>\s*<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/i,
-        
-        // Pattern 4: Even more generic pattern
-        /<div[^>]*class="[^"]*program[^"]*"[^>]*>\s*<p[^>]*class="[^"]*artist[^"]*"[^>]*>([^<]+)<\/p>\s*<p[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/p>/i
-      ];
-      
-      for (const pattern of patterns) {
-        const match = html.match(pattern);
-        if (match && match[1] && match[2]) {
-          const artist = match[1].trim();
-          const title = match[2].trim();
-          
-          if (artist && title) {
-            return `${artist} - ${title}`;
-          }
-        }
-      }
-      
-      // Try looking for any artist and song title elements in proximity
-      const artistMatch = html.match(/<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i);
-      const titleMatch = html.match(/<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/i);
-      
-      if (artistMatch && titleMatch && artistMatch[1] && titleMatch[1]) {
-        const artist = artistMatch[1].trim();
-        const title = titleMatch[1].trim();
-        
-        if (artist && title) {
-          return `${artist} - ${title}`;
-        }
-      }
-    } 
-    // For index page, use the existing logic
-    else {
-      // Map streaming URLs to CSS classes used in the HTML
-      const stationClassMap = {
-        'naxi128.streaming.rs:9152': 'naxi',
-        'naxidigital-hype128ssl.streaming.rs:8272': 'hype',
-        'naxidigital-rock128ssl.streaming.rs:8182': 'rock',
-        'naxidigital-exyu128ssl.streaming.rs:8242': 'exyu',
-        'naxidigital-exyurock128ssl.streaming.rs:8402': 'exyurock',
-        'naxidigital-70s128ssl.streaming.rs:8382': '70e',
-        'naxidigital-80s128ssl.streaming.rs:8042': '80e',
-        'naxidigital-90s128ssl.streaming.rs:8282': '90e',
-        'naxidigital-cafe128ssl.streaming.rs:8022': 'cafe',
-        'naxidigital-classic128ssl.streaming.rs:8032': 'classic',
-        'naxidigital-jazz128ssl.streaming.rs:8172': 'jazz',
-        'naxidigital-chill128ssl.streaming.rs:8412': 'chill',
-        'naxidigital-house128ssl.streaming.rs:8002': 'house',
-        'naxidigital-lounge128ssl.streaming.rs:8252': 'lounge',
-        'naxidigital-chillwave128ssl.streaming.rs:8322': 'chillwave',
-        'naxidigital-instrumental128.streaming.rs:8432': 'instrumental',
-        'naxidigital-reggae128.streaming.rs:8422': 'reggae',
-        'naxidigital-rnb128ssl.streaming.rs:8122': 'rnb',
-        'naxidigital-mix128ssl.streaming.rs:8222': 'mix',
-        'naxidigital-gold128ssl.streaming.rs:8062': 'gold',
-        'naxidigital-blues128ssl.streaming.rs:8312': 'blues-rock',
-        'naxidigital-evergreen128ssl.streaming.rs:8012': 'evergreen',
-        'naxidigital-funk128ssl.streaming.rs:8362': 'funk',
-        'naxidigital-dance128ssl.streaming.rs:8112': 'dance',
-        'naxidigital-disco128ssl.streaming.rs:8352': 'disco',
-        'naxidigital-clubbing128ssl.streaming.rs:8092': 'clubbing',
-        'naxidigital-fresh128ssl.streaming.rs:8212': 'fresh',
-        'naxidigital-latino128ssl.streaming.rs:8232': 'latino',
-        'naxidigital-love128ssl.streaming.rs:8102': 'love',
-        'naxidigital-boem128ssl.streaming.rs:8162': 'boem',
-        'naxidigital-adore128ssl.streaming.rs:8332': 'adore',
-        'naxidigital-slager128ssl.streaming.rs:8372': 'slager',
-        'naxidigital-millennium128ssl.streaming.rs:8342': 'millennium',
-        'naxidigital-fitness128ssl.streaming.rs:8292': 'fitness',
-        'naxidigital-kids128ssl.streaming.rs:8052': 'kids',
-        'naxidigital-xmas128.streaming.rs:8392': 'xmas'
-      };
-
-      // Extract station key from URL
-      const cleanUrl = stationUrl
-        .replace('https://', '')
-        .replace('http://', '')
-        .replace(';stream.nsv', '')
-        .replace(';*.mp3', '')
-        .split('/')[0];
-
-      // Get the CSS class for this station
-      const stationClass = stationClassMap[cleanUrl] || cleanUrl.split('.')[0];
-      
-      // Pattern to match the specific station's artist and song
-      const stationPattern = new RegExp(
-        `<p class="artist ${stationClass}"[^>]*>([^<]+)<\\/p>\\s*<p class="song ${stationClass}"[^>]*>([^<]+)<\\/p>`,
-        'i'
-      );
-      
-      const match = html.match(stationPattern);
-      
-      if (match && match[1] && match[2]) {
-        const artist = match[1].trim();
-        const title = match[2].trim();
-        
-        // Basic validation to avoid station names
-        if (artist && title && 
-            !artist.toLowerCase().includes('naxi') && 
-            !title.toLowerCase().includes('naxi')) {
-          return `${artist} - ${title}`;
-        }
-      }
-      
-      // Alternative pattern matching the structure you provided
-      const alternativePattern = new RegExp(
-        `<div class="station-data"[^>]*>\\s*<p class="artist ${stationClass}"[^>]*>([^<]+)<\\/p>\\s*<p class="song ${stationClass}"[^>]*>([^<]+)<\\/p>`,
-        'is'
-      );
-      
-      const altMatch = html.match(alternativePattern);
-      
-      if (altMatch && altMatch[1] && altMatch[2]) {
-        const artist = altMatch[1].trim();
-        const title = altMatch[2].trim();
-        
-        if (artist && title && 
-            !artist.toLowerCase().includes('naxi') && 
-            !title.toLowerCase().includes('naxi')) {
-          return `${artist} - ${title}`;
-        }
+    // Try multiple patterns in order of specificity
+    
+    // Pattern 1: The structure you specified
+    const pattern1 = /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*[^>]*>([^<]+)<\/p>/i;
+    let match = html.match(pattern1);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      console.log('Pattern 1 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
       }
     }
-
+    
+    // Pattern 2: More flexible pattern for current-program__data
+    const pattern2 = /<div[^>]*class="[^"]*current-program__data[^"]*"[^>]*>\s*<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>\s*<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/gi;
+    match = pattern2.exec(html);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      console.log('Pattern 2 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    // Pattern 3: Look for any artist-name and song-title classes in proximity
+    const artistMatches = [...html.matchAll(/<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/gi)];
+    const titleMatches = [...html.matchAll(/<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/gi)];
+    
+    console.log('Found artist matches:', artistMatches.length);
+    console.log('Found title matches:', titleMatches.length);
+    
+    if (artistMatches.length > 0 && titleMatches.length > 0) {
+      // Take the first match of each
+      const artist = artistMatches[0][1].trim();
+      const title = titleMatches[0][1].trim();
+      console.log('Pattern 3 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    // Pattern 4: Look for data-program elements
+    const pattern4 = /<div[^>]*data-program[^>]*>\s*<div[^>]*artist[^>]*>([^<]+)<\/div>\s*<div[^>]*title[^>]*>([^<]+)<\/div>/i;
+    match = html.match(pattern4);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      console.log('Pattern 4 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    // Pattern 5: Generic pattern looking for "Trenutno" (Currently Playing in Serbian)
+    const pattern5 = /Trenutno:[\s\S]*?<strong>([^<]+)<\/strong>[\s\S]*?-[\s\S]*?<strong>([^<]+)<\/strong>/i;
+    match = html.match(pattern5);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      console.log('Pattern 5 matched:', artist, '-', title);
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    console.log('No patterns matched');
     return null;
   } catch (e) {
     console.error('Naxi parsing error:', e);
@@ -358,25 +325,22 @@ async function streamMetadataMonitor(response, metaInt) {
     const reader = response.body.getReader();
     let buffer = new Uint8Array(0);
     let metadataFound = null;
-    const maxAttempts = 3; // Try up to 3 meta intervals
+    const maxAttempts = 3;
     let attempts = 0;
 
     while (attempts < maxAttempts && !metadataFound) {
-      // Read exactly one metadata interval plus potential metadata block
       const targetBytes = metaInt + (attempts === 0 ? 0 : 1) + 255;
 
       while (buffer.length < targetBytes) {
         const { done, value } = await reader.read();
         if (done) break;
         
-        // Efficient buffer appending
         const newBuffer = new Uint8Array(buffer.length + value.length);
         newBuffer.set(buffer);
         newBuffer.set(value, buffer.length);
         buffer = newBuffer;
       }
 
-      // Extract metadata from current position
       metadataFound = extractIcyMetadata(buffer, metaInt, attempts * metaInt);
       attempts++;
     }
@@ -398,8 +362,6 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
 
   try {
     const metadataBytes = buffer.slice(offset + 1, offset + 1 + metaLength);
-    
-    // Try multiple encodings in sequence
     const encodings = ['utf-8', 'iso-8859-1', 'windows-1250'];
     let metadataString = '';
     
@@ -412,7 +374,6 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
       }
     }
     
-    // Skip specific empty metadata patterns but keep others for analysis
     if (metadataString.trim() === 'StreamTitle=\'\';' || 
         metadataString.trim() === 'StreamTitle="";') {
       return null;
@@ -421,13 +382,10 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
     const streamTitleMatch = metadataString.match(/StreamTitle=['"](.*?)['"]/);
     if (streamTitleMatch) {
       let title = streamTitleMatch[1].trim();
-      // Only return null for truly empty titles (after trim)
       if (title === '') return null;
-      
       return !isLikelyStationName(title) ? title : null;
     }
 
-    // Alternative pattern for some streams
     const altMatch = metadataString.match(/StreamTitle=([^;]+)/);
     if (altMatch) {
       let title = altMatch[1].trim();
@@ -435,7 +393,6 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
       return !isLikelyStationName(title) ? title : null;
     }
     
-    // If we have non-empty metadata but no pattern matched, return as-is
     return metadataString.trim() || null;
   } catch (e) {
     console.log('Metadata parsing error:', e);
@@ -444,10 +401,9 @@ function extractIcyMetadata(buffer, metaInt, offset = 0) {
 }
 
 async function handleRadioParadise(stationUrl) {
-  const qualityInfo = {}; // Initialize empty qualityInfo object
+  const qualityInfo = {};
   
   try {
-    // Normalize the URL (remove query params and protocol variations)
     const cleanUrl = stationUrl
       .replace(/^https?:\/\//, '')
       .split('?')[0]
@@ -494,7 +450,6 @@ async function handleRadioParadise(stationUrl) {
 
 async function tryAlternativeMethods(response, qualityInfo) {
   try {
-    // Check for SHOUTcast v1 metadata (similar to ICY)
     const shoutcastMetadata = await parseShoutcastV1Metadata(response.clone());
     if (shoutcastMetadata && !isLikelyStationName(shoutcastMetadata)) {
       return shoutcastMetadata;
@@ -513,7 +468,6 @@ async function parseShoutcastV1Metadata(response) {
     const { value } = await reader.read();
     const chunk = new TextDecoder().decode(value.slice(0, 4096));
     
-    // Look for SHOUTcast v1 metadata pattern (same as ICY)
     const matches = chunk.match(/StreamTitle=['"](.*?)['"]/);
     if (matches && matches[1]) {
       return matches[1].trim();
@@ -551,9 +505,9 @@ function createSuccessResponse(title, quality = {}) {
   return new Response(JSON.stringify({
     success: true,
     title: title ? cleanTitle(title) : null,
-    rawTitle: title || null,  // Include the raw title for reference
+    rawTitle: title || null,
     isStationName: title ? isLikelyStationName(title) : true,
-    hasMetadata: title !== null,  // Explicitly indicate if metadata was found
+    hasMetadata: title !== null,
     quality: Object.keys(qualityResponse).length > 0 ? qualityResponse : null
   }), {
     headers: { 
@@ -584,14 +538,12 @@ function createErrorResponse(message, status = 500, quality = {}) {
 function cleanTitle(title) {
   if (!title) return null;
   
-  // First basic cleanup
   let cleaned = title
-    .replace(/<\/?[^>]+(>|$)/g, '')  // Remove HTML tags
-    .replace(/(https?:\/\/[^\s]+)/g, '')  // Remove URLs
-    .replace(/\x00/g, '')  // Remove null bytes
+    .replace(/<\/?[^>]+(>|$)/g, '')
+    .replace(/(https?:\/\/[^\s]+)/g, '')
+    .replace(/\x00/g, '')
     .trim();
     
-  // Remove common prefixes if they exist
   const prefixes = [
     'Trenutno:', 'Now Playing:', 'Current:', 
     'Playing:', 'On Air:', 'NP:', 'Now:', '♪'
@@ -603,10 +555,8 @@ function cleanTitle(title) {
     }
   }
   
-  // Trim any remaining whitespace and normalize spaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
   
-  // Only return null for truly empty strings
   return cleaned || null;
 }
 
