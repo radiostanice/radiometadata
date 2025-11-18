@@ -1,3 +1,4 @@
+
 // Station Handlers Registry
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
@@ -121,6 +122,7 @@ function normalizeUrlForComparison(url) {
     .replace(';*.mp3', '')
     .toLowerCase();
 }
+
 // Handle Naxi radio stations
 async function handleNaxiRadio(stationUrl) {
   // Map station URLs to their webpage paths
@@ -175,21 +177,9 @@ async function handleNaxiRadio(stationUrl) {
   const stationName = stationNameMap[cleanUrl] || cleanUrl;
   
   try {
-    // First try the direct API endpoint
-    const apiUrl1 = `https://www.naxi.rs/stations/rs-${stationName}.json?_=${Date.now()}`;
-    let nowPlaying = await tryNaxiApi(apiUrl1);
-    
-    if (!nowPlaying) {
-      // Fallback to alternative endpoint if first one fails
-      const apiUrl2 = `https://www.naxi.rs/proxy/${stationName}.xml?_=${Date.now()}`;
-      nowPlaying = await tryNaxiApi(apiUrl2);
-    }
-    
-    if (!nowPlaying) {
-      // Final fallback to generic nowplaying endpoint
-      const apiUrl3 = `https://nowplaying.naxi.rs/data/${stationName}.json?_=${Date.now()}`;
-      nowPlaying = await tryNaxiApi(apiUrl3);
-    }
+    // Direct web scraping approach for Naxi.rs
+    const webUrl = `https://www.naxi.rs/radio/${stationName}`;
+    const nowPlaying = await tryNaxiWebScraping(webUrl);
 
     // Check if we got valid data
     if (nowPlaying) {
@@ -210,13 +200,13 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-async function tryNaxiApi(url) {
+// Web scraping function specifically for Naxi.rs with new structure
+async function tryNaxiWebScraping(url) {
   try {
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/json',
-        'Referer': 'https://www.naxi.rs/'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
       },
       cf: {
         cacheTtl: 10
@@ -227,34 +217,10 @@ async function tryNaxiApi(url) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
-    const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
-      const data = await response.json();
-      
-      // Handle the HTML response format with "rs" field
-      if (data.rs && typeof data.rs === 'string') {
-        return extractNaxiNowPlaying(data.rs);
-      }
-      // Other JSON formats you already handle
-      else if (data.title || data.artist) {
-        return `${data.artist || 'Unknown'} - ${data.title || 'Unknown'}`;
-      } else if (data.current_track) {
-        return data.current_track;
-      } else if (typeof data === 'string') {
-        return data.includes(' - ') ? data : null;
-      }
-    } else if (contentType && contentType.includes('text/xml')) {
-      // Handle XML response (unchanged)
-      const text = await response.text();
-      const xmlMatch = text.match(/<artist>([^<]+)<\/artist>.*?<title>([^<]+)<\/title>/is);
-      if (xmlMatch && xmlMatch[1] && xmlMatch[2]) {
-        return `${xmlMatch[1].trim()} - ${xmlMatch[2].trim()}`;
-      }
-    }
-
-    return null;
+    const html = await response.text();
+    return extractNaxiNowPlaying(html);
   } catch (error) {
-    console.error(`Error with Naxi API (${url}):`, error);
+    console.error(`Error with Naxi web scraping (${url}):`, error);
     return null;
   }
 }
@@ -309,57 +275,44 @@ function isNaxiStation(stationUrl) {
     return naxiDomains.some(domain => cleanUrl.includes(domain));
 }
 
-// Extract currently playing song from Naxi HTML
+// Extract currently playing song from Naxi HTML with new structure
 function extractNaxiNowPlaying(html) {
   try {
-    // Try parsing as JSON first (for API responses)
-    try {
-      const jsonData = JSON.parse(html);
-      if (typeof jsonData === 'string') {
-        // Sometimes the response is JSON but contains HTML as a string
-        return extractFromHtml(jsonData);
+    // New pattern for the updated Naxi.rs structure
+    const artistPattern = /<p class="artist-name"[^>]*>([^<]+)<\/p>/i;
+    const titlePattern = /<p class="song-title"[^>]*[^>]*>([^<]+)<\/p>/i;
+    
+    const artistMatch = html.match(artistPattern);
+    const titleMatch = html.match(titlePattern);
+    
+    if (artistMatch && titleMatch && artistMatch[1] && titleMatch[1]) {
+      const artist = artistMatch[1].trim();
+      const title = titleMatch[1].trim();
+      
+      // Basic validation to avoid station names
+      if (artist && title && 
+          !artist.toLowerCase().includes('naxi') && 
+          !title.toLowerCase().includes('naxi')) {
+        return `${artist} - ${title}`;
       }
-    } catch (e) {
-      // Not JSON, parse as HTML
-      return extractFromHtml(html);
+    }
+    
+    // Alternative pattern if the above doesn't work
+    const combinedPattern = /<div class="current-program__data"[^>]*>[\s\S]*?<p class="artist-name"[^>]*>([^<]+)<\/p>[\s\S]*?<p class="song-title"[^>]*>([^<]+)<\/p>/i;
+    const combinedMatch = html.match(combinedPattern);
+    
+    if (combinedMatch && combinedMatch[1] && combinedMatch[2]) {
+      const artist = combinedMatch[1].trim();
+      const title = combinedMatch[2].trim();
+      
+      if (artist && title && 
+          !artist.toLowerCase().includes('naxi') && 
+          !title.toLowerCase().includes('naxi')) {
+        return `${artist} - ${title}`;
+      }
     }
 
-    function extractFromHtml(htmlString) {
-      // New pattern for the structure shown in your example
-      const naxiPattern = /Slušate:[\s\S]*?<span>([^<]+)<\/span>\s*-\s*([^<]+)/;
-      const match = htmlString.match(naxiPattern);
-      if (match && match[1] && match[2]) {
-        const artist = match[1].trim();
-        const title = match[2].trim();
-        return `${artist} - ${title}`;
-      }
-
-      // Keep your existing patterns as fallbacks
-      const onAirPattern = /Slušate:[\s\S]*?<b>([^<]+)<\/b>\s*-?\s*<b>([^<]+)<\/b>/;
-      const onAirMatch = htmlString.match(onAirPattern);
-      if (onAirMatch && onAirMatch[1] && onAirMatch[2]) {
-        const artist = onAirMatch[1].trim();
-        const title = onAirMatch[2].trim();
-        return `${artist} - ${title}`;
-      }
-
-      const listItemPattern = /<li><b>([^<]+)<\/b>\s*-\s*([^<]+)<\/li>/;
-      const listItemMatch = htmlString.match(listItemPattern);
-      if (listItemMatch && listItemMatch[1] && listItemMatch[2]) {
-        const artist = listItemMatch[1].trim();
-        const title = listItemMatch[2].trim();
-        return `${artist} - ${title}`;
-      }
-
-      const messyPattern = /Slušate:[\s\S]*?<\/i>([^<]+)/;
-      const messyMatch = htmlString.match(messyPattern);
-      if (messyMatch && messyMatch[1]) {
-        const match = messyMatch[1].trim();
-        return match.includes(' - ') ? match : null;
-      }
-
-      return null;
-    }
+    return null;
   } catch (e) {
     console.error('Naxi parsing error:', e);
     return null;
@@ -548,7 +501,8 @@ function isLikelyStationName(text) {
     t.split('-').length > 4 ||
     t.split(' ').length > 10 ||
     t.includes('stream') ||
-    t.includes('broadcast')
+    t.includes('broadcast') ||
+    t.includes('naxi')
   );
 }
 
