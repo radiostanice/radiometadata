@@ -149,6 +149,7 @@ async function handleNaxiRadio(stationUrl) {
   try {
     // Map streaming hosts to their corresponding web pages and data-station values
     const hostToInfoMap = {
+	  'naxi128.streaming.rs:9152': { page: 'live', station: 'naxi' },
       'naxidigital-rnb128ssl.streaming.rs': { page: 'rnb', station: 'rnb' },
       'naxidigital-rock128ssl.streaming.rs': { page: 'rock', station: 'rock' },
       'naxidigital-house128ssl.streaming.rs': { page: 'house', station: 'house' },
