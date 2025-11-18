@@ -58,7 +58,7 @@ function selectHandler(stationUrl) {
   return STATION_HANDLERS.default;
 }
 
-// Default station handler (unchanged but moved)
+// Default station handler (unchanged)
 async function handleDefaultStation(stationUrl) {
   const fetchOptions = {
     method: 'GET',
@@ -190,7 +190,7 @@ function isNaxiStation(stationUrl) {
   return cleanUrl.includes('naxi.rs');
 }
 
-// Extract currently playing song from Naxi HTML with new structure
+// Extract currently playing song from Naxi HTML with enhanced structure matching
 function extractNaxiNowPlaying(html, stationUrl) {
   try {
     // Extract category from URL
@@ -198,16 +198,55 @@ function extractNaxiNowPlaying(html, stationUrl) {
     const pathParts = urlObj.pathname.split('/').filter(Boolean);
     const category = pathParts[0] || 'index';
     
-    // For category pages, look for the current-program__data structure
+    // For category pages, look for various possible structures
     if (category !== 'index') {
-      // Pattern to match the provided structure
-      const pattern = /<div class="current-program__data">\s*<p class="artist-name">([^<]+)<\/p>\s*<p class="song-title"[^>]*>([^<]+)<\/p>/i;
-      
-      const match = html.match(pattern);
+      // Try the structure you mentioned first
+      let pattern = /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*>([^<]+)<\/p>/i;
+      let match = html.match(pattern);
       
       if (match && match[1] && match[2]) {
         const artist = match[1].trim();
         const title = match[2].trim();
+        
+        if (artist && title) {
+          return `${artist} - ${title}`;
+        }
+      }
+      
+      // Try alternative patterns in case the class names are different
+      const patterns = [
+        // Pattern 1: current-program__data with data- attributes
+        /<div class="current-program__data"[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*data-station="[^"]*"[^>]*>([^<]+)<\/p>/i,
+        
+        // Pattern 2: Simpler structure with data-program class
+        /<div[^>]*data-program[^>]*>\s*<p class="artist-name"[^>]*>([^<]+)<\/p>\s*<p class="song-title"[^>]*>([^<]+)<\/p>/i,
+        
+        // Pattern 3: More generic pattern looking for artist and title classes
+        /<div[^>]*class="[^"]*current-program[^"]*"[^>]*>\s*<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>\s*<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/i,
+        
+        // Pattern 4: Even more generic pattern
+        /<div[^>]*class="[^"]*program[^"]*"[^>]*>\s*<p[^>]*class="[^"]*artist[^"]*"[^>]*>([^<]+)<\/p>\s*<p[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/p>/i
+      ];
+      
+      for (const pattern of patterns) {
+        const match = html.match(pattern);
+        if (match && match[1] && match[2]) {
+          const artist = match[1].trim();
+          const title = match[2].trim();
+          
+          if (artist && title) {
+            return `${artist} - ${title}`;
+          }
+        }
+      }
+      
+      // Try looking for any artist and song title elements in proximity
+      const artistMatch = html.match(/<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i);
+      const titleMatch = html.match(/<p[^>]*class="[^"]*song-title[^"]*"[^>]*>([^<]+)<\/p>/i);
+      
+      if (artistMatch && titleMatch && artistMatch[1] && titleMatch[1]) {
+        const artist = artistMatch[1].trim();
+        const title = titleMatch[1].trim();
         
         if (artist && title) {
           return `${artist} - ${title}`;
