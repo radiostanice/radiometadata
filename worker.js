@@ -184,7 +184,7 @@ async function handleNaxiRadio(stationUrl) {
       'naxidigital-millennium128ssl.streaming.rs': { page: 'millennium', station: 'millennium' },
       'naxidigital-fitness128ssl.streaming.rs': { page: 'fitness', station: 'fitness' },
       'naxidigital-kids128ssl.streaming.rs': { page: 'kids', station: 'kids' },
-      'naxidigital-xmas128.streaming.rs': { page: 'xmas', station: 'xmas' }
+      'naxidigital-xmas128ssl.streaming.rs': { page: 'xmas', station: 'xmas' }
     };
     
     // Extract host from station URL
@@ -208,6 +208,9 @@ async function handleNaxiRadio(stationUrl) {
     // Build the web URL
     const webUrl = `https://www.naxi.rs/${pageInfo.page}`;
     
+    // Add delay to allow JavaScript to update content (as requested)
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
     // Scrape the web page
     const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
 
@@ -230,9 +233,7 @@ async function handleNaxiRadio(stationUrl) {
 // Enhanced web scraping function for Naxi.rs with better error handling
 async function tryNaxiWebScraping(url, stationUrl, dataStation) {
   try {
-    // Add delay to allow JavaScript to update content
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
+    // Scrape the web page immediately after the delay in handleNaxiRadio
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -558,8 +559,8 @@ function cleanTitle(title) {
   const entities = {
     '&#039;': "'",
     '&amp;': '&',
-    '&lt;': '<',
-    '&gt;': '>',
+    '<': '<',
+    '>': '>',
     '&quot;': '"',
     '&#x27;': "'",
     '&#x2F;': '/',
