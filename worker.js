@@ -553,7 +553,24 @@ function cleanTitle(title) {
   }
   
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
-  
+
+  // Decode common HTML entities
+  const entities = {
+    '&#039;': "'",
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#x27;': "'",
+    '&#x2F;': '/',
+    '&#x60;': '`'
+  };
+
+  cleaned = cleaned.replace(
+    /&#?\w+;/g,
+    match => entities[match] || match
+  );
+
   return cleaned || null;
 }
 
