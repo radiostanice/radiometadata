@@ -193,13 +193,25 @@ async function handleRadioS(stationUrl) {
 
     const html = await response.text();
     
+    // Log HTML snippet for debugging (first 5000 characters)
+    console.log('Radio S HTML snippet:', html.substring(0, 5000));
+    
     // Extract track information for the specific station
     const trackInfo = extractRadioSTrackInfo(html, alias);
     
     if (trackInfo) {
       return createSuccessResponse(trackInfo, {
         source: 'radios-web',
-        responseTime: 0
+        responseTime: Date.now() - response.headers.get('date')
+      });
+    }
+    
+    // If no track info found, try alternative extraction methods
+    const altTrackInfo = extractRadioSTrackInfoAlt(html, alias);
+    if (altTrackInfo) {
+      return createSuccessResponse(altTrackInfo, {
+        source: 'radios-web-alt',
+        responseTime: Date.now() - response.headers.get('date')
       });
     }
     
@@ -254,15 +266,27 @@ function getRadioSAlias(stationUrl) {
     return portMap[port] || null;
   }
   
+  // Try to extract alias from path if using direct paths
+  const pathMatch = stationUrl.match(/\/([^\/]+)$/);
+  if (pathMatch) {
+    const path = pathMatch[1].replace(';*.mp3', '').replace(';stream.nsv', '');
+    if (portMap[path]) {
+      return portMap[path];
+    }
+  }
+  
   return null;
 }
 
-// Extract track information from Radio S HTML
+// Extract track information from Radio S HTML (primary method)
 function extractRadioSTrackInfo(html, alias) {
   try {
+    // Log for debugging
+    console.log(`Looking for alias: ${alias}`);
+    
     // Create regex to match the specific element
     const regex = new RegExp(
-      `<span id="now-playing-text-${alias}"[^>]*class="[^"]*"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
+      `<span id="now-playing-text-${alias}"[^>]*class="[^"]*"[^>]*>\\s*<strong>([^<]+)<\\/strong>\\s*<br[^>]*>\\s*([^<]+)\\s*<\\/span>`,
       'i'
     );
     
@@ -271,26 +295,48 @@ function extractRadioSTrackInfo(html, alias) {
     if (match && match[1] && match[2]) {
       const artist = match[1].trim();
       const title = match[2].trim();
+      console.log(`Found track: ${artist} - ${title}`);
       return `${artist} - ${title}`;
     }
     
-    // Try alternative pattern without strict class matching
-    const altRegex = new RegExp(
-      `<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
-      'i'
-    );
-    
-    const altMatch = html.match(altRegex);
-    
-    if (altMatch && altMatch[1] && altMatch[2]) {
-      const artist = altMatch[1].trim();
-      const title = altMatch[2].trim();
-      return `${artist} - ${title}`;
-    }
+    // Log pattern for debugging
+    console.log(`Pattern used: ${regex}`);
     
     return null;
   } catch (error) {
     console.error('Error extracting Radio S track info:', error);
+    return null;
+  }
+}
+
+// Alternative extraction method
+function extractRadioSTrackInfoAlt(html, alias) {
+  try {
+    // Try a more flexible pattern
+    const regex = new RegExp(
+      `<span[^>]*id\\s*=\\s*["']now-playing-text-${alias}["'][^>]*>(.*?)</span>`,
+      'si'
+    );
+    
+    const match = html.match(regex);
+    
+    if (match && match[1]) {
+      const content = match[1];
+      // Extract artist and title from content
+      const artistMatch = content.match(/<strong>([^<]+)<\/strong>/i);
+      const titleMatch = content.match(/<br[^>]*>\s*([^<\n\r]+)/i);
+      
+      if (artistMatch && titleMatch) {
+        const artist = artistMatch[1].trim();
+        const title = titleMatch[1].trim();
+        console.log(`Alternative found track: ${artist} - ${title}`);
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error in alternative extraction:', error);
     return null;
   }
 }
