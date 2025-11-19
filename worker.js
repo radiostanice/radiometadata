@@ -2,7 +2,7 @@
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
-  'radios': handleRadioS,  // Added Radio S handler
+  'radios': handleRadioS,  // Radio S handler
   'default': handleDefaultStation
 };
 
@@ -79,6 +79,10 @@ function selectHandler(stationUrl) {
   return STATION_HANDLERS.default;
 }
 
+function isRadioSStation(stationUrl) {
+  return stationUrl.includes('radios.rs') || stationUrl.includes('stream.radios.rs');
+}
+
 // Default station handler
 async function handleDefaultStation(stationUrl) {
   const fetchOptions = {
@@ -147,6 +151,148 @@ function normalizeUrlForComparison(url) {
     .replace(';stream.nsv', '')
     .replace(';*.mp3', '')
     .toLowerCase();
+}
+
+function isNaxiStation(stationUrl) {
+  const cleanUrl = stationUrl
+    .replace('https://', '')
+    .replace('http://', '')
+    .replace(';stream.nsv', '')
+    .replace(';*.mp3', '')
+    .split('/')[0];
+    
+  return cleanUrl.includes('naxi') && !cleanUrl.includes('radios');
+}
+
+// Radio S station handler
+async function handleRadioS(stationUrl) {
+  try {
+    // Get the alias for the station based on the stream URL
+    const alias = getRadioSAlias(stationUrl);
+    
+    if (!alias) {
+      return createErrorResponse('Unable to determine Radio S station alias', 400);
+    }
+    
+    // Fetch the Radio S homepage
+    const response = await fetch('https://www.radios.rs/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,rs;q=0.8',
+        'Cache-Control': 'no-cache'
+      },
+      cf: {
+        cacheTtl: 0 // Disable caching for fresh data
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const html = await response.text();
+    
+    // Extract track information for the specific station
+    const trackInfo = extractRadioSTrackInfo(html, alias);
+    
+    if (trackInfo) {
+      return createSuccessResponse(trackInfo, {
+        source: 'radios-web',
+        responseTime: 0
+      });
+    }
+    
+    return createErrorResponse('No track information found for Radio S station', 404);
+    
+  } catch (error) {
+    return createErrorResponse(`Radio S Error: ${error.message}`, 500);
+  }
+}
+
+// Map stream URLs to their aliases
+function getRadioSAlias(stationUrl) {
+  // Map port numbers to aliases
+  const portMap = {
+    '9000': 's1',
+    '9002': 's2',
+    '9004': 's3',
+    '9006': 's4',
+    '9026': 's_love',      // Xtra
+    '9028': 's_pop',       // Pop & Rock
+    '9010': 's_mix',       // Mix
+    '9020': 's_gold',      // Gold
+    '9022': 's_kids',      // Kids
+    '9014': 's_energy',    // Dance
+    '9016': 's_folk',      // Narodni
+    '9018': 's_juzni',     // Južni
+    '9030': 's_mchits',    // Trap & Rap
+    '9012': 's_cafe',      // Cafe
+    '9032': 's_rock',      // Rock
+    '9042': 's_ex_yu',     // Ex-Yu
+    '9036': 's_80te',      // 80-e
+    '9052': 's_2000-e',    // 2000-e
+    '9060': 's_2000-te_folk', // 2000-te Folk
+    '9044': 's_easy',      // Easy
+    '9054': 's_latino',    // Latino
+    '9066': 's_chill',     // Chill
+    '9062': 's_lounge2',   // Lounge
+    '9064': 's_starogradski', // Starogradski
+    '9058': 's_rock_ballads', // Rock Ballads
+    '9074': 's_classic',   // Classic
+    '9072': 's_mod_classic', // Modern Classic
+    '9076': 's_jazz',      // Jazz
+    '9068': 's_gym',       // Gym
+    '9078': 's_sport',     // Sport
+    '9080': 's_sport_urban' // Sport Urban
+  };
+
+  // Extract port from URL
+  const matches = stationUrl.match(/:(\d+)/);
+  if (matches && matches[1]) {
+    const port = matches[1];
+    return portMap[port] || null;
+  }
+  
+  return null;
+}
+
+// Extract track information from Radio S HTML
+function extractRadioSTrackInfo(html, alias) {
+  try {
+    // Create regex to match the specific element
+    const regex = new RegExp(
+      `<span id="now-playing-text-${alias}"[^>]*class="[^"]*"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
+      'i'
+    );
+    
+    const match = html.match(regex);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      return `${artist} - ${title}`;
+    }
+    
+    // Try alternative pattern without strict class matching
+    const altRegex = new RegExp(
+      `<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
+      'i'
+    );
+    
+    const altMatch = html.match(altRegex);
+    
+    if (altMatch && altMatch[1] && altMatch[2]) {
+      const artist = altMatch[1].trim();
+      const title = altMatch[2].trim();
+      return `${artist} - ${title}`;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error extracting Radio S track info:', error);
+    return null;
+  }
 }
 
 // Enhanced Naxi station handler with correct station mapping
@@ -260,195 +406,6 @@ async function tryNaxiWebScraping(url, stationUrl, dataStation) {
     return result;
   } catch (error) {
     throw error;
-  }
-}
-
-function isNaxiStation(stationUrl) {
-  const cleanUrl = stationUrl
-    .replace('https://', '')
-    .replace('http://', '')
-    .replace(';stream.nsv', '')
-    .replace(';*.mp3', '')
-    .split('/')[0];
-    
-  return cleanUrl.includes('naxi') && !cleanUrl.includes('radios');
-}
-
-function isRadioSStation(stationUrl) {
-  const cleanUrl = stationUrl
-    .replace('https://', '')
-    .replace('http://', '')
-    .replace(';stream.nsv', '')
-    .replace(';*.mp3', '')
-    .split('/')[0];
-    
-  return cleanUrl.includes('radios.rs') || cleanUrl.includes('stream.radios.rs');
-}
-
-// Radio S station handler
-async function handleRadioS(stationUrl) {
-  try {
-    // First get the station alias from the URL
-    const alias = getRadioSAlias(stationUrl);
-    if (!alias) {
-      return createErrorResponse('Unable to determine station alias', 400);
-    }
-    
-    // Scrape the main page
-    const nowPlaying = await scrapeRadioSWebsite(alias);
-    
-    if (nowPlaying) {
-      return createSuccessResponse(nowPlaying, {
-        source: 'radios-web',
-        responseTime: 0
-      });
-    }
-    
-    return createErrorResponse('No metadata found for Radio S station', 404);
-  } catch (error) {
-    return createErrorResponse(`Radio S Error: ${error.message}`, 500);
-  }
-}
-
-// Extract station alias (s1, s2, s_love, etc.) from the URL
-function getRadioSAlias(stationUrl) {
-  // Map streaming ports/paths to their aliases
-  const urlMap = {
-    ':9000': 's1',
-    ':9002': 's2',
-    ':9004': 's3',
-    ':9006': 's4',
-    ':9026': 's_love',      // Xtra
-    ':9028': 's_pop',       // Pop & Rock
-    ':9010': 's_mix',       // Mix
-    ':9020': 's_gold',      // Gold
-    ':9022': 's_kids',      // Kids
-    ':9014': 's_energy',    // Dance
-    ':9016': 's_folk',      // Narodni
-    ':9018': 's_juzni',     // Južni
-    ':9030': 's_mchits',    // Trap & Rap
-    ':9012': 's_cafe',      // Cafe
-    ':9032': 's_rock',      // Rock
-    ':9042': 's_ex_yu',     // Ex-Yu
-    ':9036': 's_80te',      // 80-e
-    ':9052': 's_2000-e',    // 2000-e
-    ':9060': 's_2000-te_folk', // 2000-te Folk
-    ':9044': 's_easy',      // Easy
-    ':9054': 's_latino',    // Latino
-    ':9066': 's_chill',     // Chill
-    ':9062': 's_lounge2',   // Lounge
-    ':9064': 's_starogradski', // Starogradski
-    ':9058': 's_rock_ballads', // Rock Ballads
-    ':9074': 's_classic',   // Classic
-    ':9072': 's_mod_classic', // Modern Classic
-    ':9076': 's_jazz',      // Jazz
-    ':9068': 's_gym',       // Gym
-    ':9078': 's_sport',     // Sport
-    ':9080': 's_sport_urban' // Sport Urban
-  };
-
-  // Check if any of the port mappings match
-  for (const [key, alias] of Object.entries(urlMap)) {
-    if (stationUrl.includes(key)) {
-      return alias;
-    }
-  }
-  
-  // Try to extract from path if using direct paths
-  const pathMatch = stationUrl.match(/\/([^\/]+)$/);
-  if (pathMatch) {
-    const path = pathMatch[1].replace(';*.mp3', '').replace(';stream.nsv', '');
-    if (urlMap[`:${path}`]) {
-      return urlMap[`:${path}`];
-    }
-  }
-  
-  return null;
-}
-
-// Scrape the Radio S website for current track info
-async function scrapeRadioSWebsite(alias) {
-  try {
-    // Fetch the main page
-    const response = await fetch('https://www.radios.rs/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,sr;q=0.8',
-        'Cache-Control': 'no-cache'
-      },
-      cf: {
-        cacheTtl: 0 // Disable caching for fresh data
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const html = await response.text();
-    return extractRadioSTrackInfo(html, alias);
-  } catch (error) {
-    console.error('Radio S scraping error:', error);
-    throw error;
-  }
-}
-
-// Extract track info from the HTML for the specified alias
-function extractRadioSTrackInfo(html, alias) {
-  try {
-    // Look for the now-playing element for this station
-    const regex = new RegExp(
-      `<span id="now-playing-text-${alias}"[^>]*class="[^"]*"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
-      'i'
-    );
-    
-    const match = html.match(regex);
-    
-    if (match && match[1] && match[2]) {
-      const artist = match[1].trim();
-      const title = match[2].trim();
-      if (artist && title) {
-        return `${artist} - ${title}`;
-      }
-    }
-    
-    // Try alternative pattern without strict class matching
-    const altRegex = new RegExp(
-      `<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
-      'i'
-    );
-    
-    const altMatch = html.match(altRegex);
-    
-    if (altMatch && altMatch[1] && altMatch[2]) {
-      const artist = altMatch[1].trim();
-      const title = altMatch[2].trim();
-      if (artist && title) {
-        return `${artist} - ${title}`;
-      }
-    }
-    
-    // Try another alternative with different HTML structure
-    const dataAliasRegex = new RegExp(
-      `data-alias="${alias}"[^>]*>[\\s\\S]*?<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
-      'i'
-    );
-    
-    const dataAliasMatch = html.match(dataAliasRegex);
-    
-    if (dataAliasMatch && dataAliasMatch[1] && dataAliasMatch[2]) {
-      const artist = dataAliasMatch[1].trim();
-      const title = dataAliasMatch[2].trim();
-      if (artist && title) {
-        return `${artist} - ${title}`;
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Radio S parsing error:', error);
-    return null;
   }
 }
 
