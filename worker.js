@@ -111,7 +111,7 @@ async function handleDefaultStation(stationUrl) {
 
     // Check if we have ICY headers for metadata
     const icyTitle = response.headers.get('icy-title');
-    if (icyTitle && !isLikelyStationName(icyTitle)) {
+    if (icyTitle && !isLikelyStation(icyTitle)) {
       return createSuccessResponse(icyTitle, qualityInfo);
     }
 
@@ -208,10 +208,7 @@ async function handleNaxiRadio(stationUrl) {
     // Build the web URL
     const webUrl = `https://www.naxi.rs/${pageInfo.page}`;
     
-    // Add delay to allow JavaScript to update content (as requested)
-    await new Promise(resolve => setTimeout(resolve, 700));
-    
-    // Scrape the web page
+    // Scrape the web page with delay
     const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
 
     if (nowPlaying) {
@@ -233,7 +230,9 @@ async function handleNaxiRadio(stationUrl) {
 // Enhanced web scraping function for Naxi.rs with better error handling
 async function tryNaxiWebScraping(url, stationUrl, dataStation) {
   try {
-    // Scrape the web page immediately after the delay in handleNaxiRadio
+    // Add delay to allow JavaScript to update content (as requested)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
