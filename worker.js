@@ -209,7 +209,7 @@ async function handleNaxiRadio(stationUrl) {
     const webUrl = `https://www.naxi.rs/${pageInfo.page}`;
     
     // Add delay to allow JavaScript to update content (as requested)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 700));
     
     // Scrape the web page
     const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
