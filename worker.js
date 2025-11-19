@@ -144,22 +144,22 @@ function normalizeUrlForComparison(url) {
     .toLowerCase();
 }
 
-// Handle Naxi radio stations - SIMPLIFIED FOCUSED APPROACH
+// Enhanced Naxi station handler with correct station mapping
 async function handleNaxiRadio(stationUrl) {
   try {
     // Map streaming hosts to their corresponding web pages and data-station values
     const hostToInfoMap = {
-	  'naxi128.streaming.rs:9152': { page: 'live', station: 'naxi' },
+      'naxi128.streaming.rs:9152': { page: 'live', station: 'live' }, // Live station
       'naxidigital-rnb128ssl.streaming.rs': { page: 'rnb', station: 'rnb' },
       'naxidigital-rock128ssl.streaming.rs': { page: 'rock', station: 'rock' },
       'naxidigital-house128ssl.streaming.rs': { page: 'house', station: 'house' },
       'naxidigital-cafe128ssl.streaming.rs': { page: 'cafe', station: 'cafe' },
       'naxidigital-jazz128ssl.streaming.rs': { page: 'jazz', station: 'jazz' },
       'naxidigital-classic128ssl.streaming.rs': { page: 'classic', station: 'classic' },
-      'naxidigital-80s128ssl.streaming.rs': { page: '80s', station: '80s' },
-      'naxidigital-90s128ssl.streaming.rs': { page: '90s', station: '90s' },
+      'naxidigital-80s128ssl.streaming.rs': { page: '80e', station: '80e' },
+      'naxidigital-90s128ssl.streaming.rs': { page: '90e', station: '90e' },
       'naxidigital-reggae128.streaming.rs': { page: 'reggae', station: 'reggae' },
-      'naxidigital-blues128ssl.streaming.rs': { page: 'blues', station: 'blues-rock' },
+      'naxidigital-blues128ssl.streaming.rs': { page: 'blues-rock', station: 'blues-rock' },
       'naxidigital-chill128ssl.streaming.rs': { page: 'chillout', station: 'chill' },
       'naxidigital-lounge128ssl.streaming.rs': { page: 'lounge', station: 'lounge' },
       'naxidigital-dance128ssl.streaming.rs': { page: 'dance', station: 'dance' },
@@ -174,7 +174,7 @@ async function handleNaxiRadio(stationUrl) {
       'naxidigital-exyu128ssl.streaming.rs': { page: 'exyu', station: 'exyu' },
       'naxidigital-exyurock128ssl.streaming.rs': { page: 'exyurock', station: 'exyurock' },
       'naxidigital-hype128ssl.streaming.rs': { page: 'hype', station: 'hype' },
-      'naxidigital-70s128ssl.streaming.rs': { page: '70s', station: '70e' },
+      'naxidigital-70s128ssl.streaming.rs': { page: '70e', station: '70e' },
       'naxidigital-chillwave128ssl.streaming.rs': { page: 'chillwave', station: 'chillwave' },
       'naxidigital-instrumental128.streaming.rs': { page: 'instrumental', station: 'instrumental' },
       'naxidigital-fresh128ssl.streaming.rs': { page: 'fresh', station: 'fresh' },
@@ -192,7 +192,7 @@ async function handleNaxiRadio(stationUrl) {
     const host = urlObj.hostname;
     
     // Determine the web page and data-station value
-    let pageInfo = { page: 'index', station: 'naxi' }; // default
+    let pageInfo = null;
     for (const [streamHost, info] of Object.entries(hostToInfoMap)) {
       if (host.includes(streamHost.split('.')[0])) {
         pageInfo = info;
@@ -200,10 +200,13 @@ async function handleNaxiRadio(stationUrl) {
       }
     }
     
-    // Special handling for index page
-    const webUrl = pageInfo.page === 'index' 
-      ? 'https://www.naxi.rs/' 
-      : `https://www.naxi.rs/${pageInfo.page}`;
+    // If no match found, return error
+    if (!pageInfo) {
+      return createErrorResponse('Naxi: Unknown station URL', 400);
+    }
+    
+    // Build the web URL
+    const webUrl = `https://www.naxi.rs/${pageInfo.page}`;
     
     // Scrape the web page
     const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
@@ -224,9 +227,12 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-// Web scraping function for Naxi.rs with better error handling
+// Enhanced web scraping function for Naxi.rs with better error handling
 async function tryNaxiWebScraping(url, stationUrl, dataStation) {
   try {
+    // Add delay to allow JavaScript to update content
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -263,25 +269,46 @@ function isNaxiStation(stationUrl) {
   return cleanUrl.includes('naxi');
 }
 
-// Extract currently playing song from Naxi HTML - ONLY PATTERN 3
+// Enhanced extraction with precise targeting to avoid recently played songs
 function extractNaxiNowPlaying(html, dataStation, webUrl) {
   try {
-    // ONLY use pattern 3 as requested - separate extraction to avoid recently played songs
+    // Target the first occurrence of current-program__data specifically
+    const currentProgramRegex = /<div class="current-program__data">[\s\S]*?<p class="artist-name"[^>]*>([^<]+)<\/p>[\s\S]*?<p class="song-title"[^>]*data-station="([^"]*)"[^>]*>([^<]+)<\/p>/i;
+    
+    const match = html.match(currentProgramRegex);
+    
+    if (match) {
+      const artist = match[1].trim();
+      const stationMatch = match[2].trim();
+      const title = match[3].trim();
+      
+      // Ensure the data-station matches our target station
+      if (stationMatch === dataStation && artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    // Fallback to original pattern matching but with better targeting
     let artist = null;
     let title = null;
     
-    // Pattern for artist-name (only the first match to avoid recently played)
-    const artistPattern = /<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i;
-    const artistMatch = html.match(artistPattern);
-    if (artistMatch && artistMatch[1]) {
-      artist = artistMatch[1].trim();
-    }
-    
-    // Pattern for song-title with specific data-station (only the first match)
-    const titlePattern = new RegExp(`<p[^>]*class="[^"]*song-title[^"]*"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\\/p>`, 'i');
-    const titleMatch = html.match(titlePattern);
-    if (titleMatch && titleMatch[1]) {
-      title = titleMatch[1].trim();
+    // Find the first matching artist-name within current-program section
+    const currentProgramSection = html.match(/<div class="current-program">([\s\S]*?)<div class="latest-songs">/i);
+    if (currentProgramSection) {
+      const sectionContent = currentProgramSection[1];
+      
+      const artistPattern = /<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i;
+      const artistMatch = sectionContent.match(artistPattern);
+      if (artistMatch && artistMatch[1]) {
+        artist = artistMatch[1].trim();
+      }
+      
+      // Pattern for song-title with specific data-station within current-program section
+      const titlePattern = new RegExp(`<p[^>]*class="[^"]*song-title[^"]*"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\\/p>`, 'i');
+      const titleMatch = sectionContent.match(titlePattern);
+      if (titleMatch && titleMatch[1]) {
+        title = titleMatch[1].trim();
+      }
     }
     
     // If we found both, return the result
