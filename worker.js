@@ -231,7 +231,7 @@ async function handleNaxiRadio(stationUrl) {
 async function tryNaxiWebScraping(url, stationUrl, dataStation) {
   try {
     // Add delay to allow JavaScript to update content (as requested)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1500));
     
     const response = await fetch(url, {
       headers: {
