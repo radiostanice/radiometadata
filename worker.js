@@ -72,7 +72,7 @@ function selectHandler(stationUrl) {
     return STATION_HANDLERS.radioparadise;
   }
   
-  if (isRadioSStation(cleanUrl)) {
+  if (isRadioSStation(stationUrl)) {
     return STATION_HANDLERS.radios;
   }
   
@@ -282,7 +282,7 @@ function isRadioSStation(stationUrl) {
     .replace(';*.mp3', '')
     .split('/')[0];
     
-  return cleanUrl.includes('radios') || cleanUrl.includes('stream.radios.rs');
+  return cleanUrl.includes('radios.rs') || cleanUrl.includes('stream.radios.rs');
 }
 
 // Radio S station handler
@@ -312,49 +312,58 @@ async function handleRadioS(stationUrl) {
 
 // Extract station alias (s1, s2, s_love, etc.) from the URL
 function getRadioSAlias(stationUrl) {
-  // Match known Radio S stream URLs to their aliases
-  const urlToAlias = {
-    'stream.radios.rs:9000': 's1',
-    'stream.radios.rs:9002': 's2',
-    'stream.radios.rs:9004': 's3',
-    'stream.radios.rs:9006': 's4',
-    'stream.radios.rs:9026': 's_love',      // Xtra
-    'stream.radios.rs:9028': 's_pop',       // Pop & Rock
-    'stream.radios.rs:9010': 's_mix',       // Mix
-    'stream.radios.rs:9020': 's_gold',      // Gold
-    'stream.radios.rs:9022': 's_kids',      // Kids
-    'stream.radios.rs:9014': 's_energy',    // Dance
-    'stream.radios.rs:9016': 's_folk',      // Narodni
-    'stream.radios.rs:9018': 's_juzni',     // Južni
-    'stream.radios.rs:9030': 's_mchits',    // Trap & Rap
-    'stream.radios.rs:9012': 's_cafe',      // Cafe
-    'stream.radios.rs:9032': 's_rock',      // Rock
-    'stream.radios.rs:9042': 's_ex_yu',     // Ex-Yu
-    'stream.radios.rs:9036': 's_80te',      // 80-e
-    'stream.radios.rs:9052': 's_2000-e',    // 2000-e
-    'stream.radios.rs:9060': 's_2000-te_folk', // 2000-te Folk
-    'stream.radios.rs:9044': 's_easy',      // Easy
-    'stream.radios.rs:9054': 's_latino',    // Latino
-    'stream.radios.rs:9066': 's_chill',     // Chill
-    'stream.radios.rs:9062': 's_lounge',    // Lounge
-    'stream.radios.rs:9064': 's_starogradski', // Starogradski
-    'stream.radios.rs:9058': 's_rock_ballads', // Rock Ballads
-    'stream.radios.rs:9074': 's_classic',   // Classic
-    'stream.radios.rs:9072': 's_mod_classic', // Modern Classic
-    'stream.radios.rs:9076': 's_jazz',      // Jazz
-    'stream.radios.rs:9068': 's_gym',       // Gym
-    'stream.radios.rs:9078': 's_sport',     // Sport
-    'stream.radios.rs:9080': 's_sport_urban' // Sport Urban
+  // Map streaming ports/paths to their aliases
+  const urlMap = {
+    ':9000': 's1',
+    ':9002': 's2',
+    ':9004': 's3',
+    ':9006': 's4',
+    ':9026': 's_love',      // Xtra
+    ':9028': 's_pop',       // Pop & Rock
+    ':9010': 's_mix',       // Mix
+    ':9020': 's_gold',      // Gold
+    ':9022': 's_kids',      // Kids
+    ':9014': 's_energy',    // Dance
+    ':9016': 's_folk',      // Narodni
+    ':9018': 's_juzni',     // Južni
+    ':9030': 's_mchits',    // Trap & Rap
+    ':9012': 's_cafe',      // Cafe
+    ':9032': 's_rock',      // Rock
+    ':9042': 's_ex_yu',     // Ex-Yu
+    ':9036': 's_80te',      // 80-e
+    ':9052': 's_2000-e',    // 2000-e
+    ':9060': 's_2000-te_folk', // 2000-te Folk
+    ':9044': 's_easy',      // Easy
+    ':9054': 's_latino',    // Latino
+    ':9066': 's_chill',     // Chill
+    ':9062': 's_lounge2',   // Lounge
+    ':9064': 's_starogradski', // Starogradski
+    ':9058': 's_rock_ballads', // Rock Ballads
+    ':9074': 's_classic',   // Classic
+    ':9072': 's_mod_classic', // Modern Classic
+    ':9076': 's_jazz',      // Jazz
+    ':9068': 's_gym',       // Gym
+    ':9078': 's_sport',     // Sport
+    ':9080': 's_sport_urban' // Sport Urban
   };
+
+  // Check if any of the port mappings match
+  for (const [key, alias] of Object.entries(urlMap)) {
+    if (stationUrl.includes(key)) {
+      return alias;
+    }
+  }
   
-  const cleanUrl = stationUrl
-    .replace('https://', '')
-    .replace('http://', '')
-    .replace(';stream.nsv', '')
-    .replace(';*.mp3', '')
-    .split('/')[0];
-    
-  return urlToAlias[cleanUrl] || null;
+  // Try to extract from path if using direct paths
+  const pathMatch = stationUrl.match(/\/([^\/]+)$/);
+  if (pathMatch) {
+    const path = pathMatch[1].replace(';*.mp3', '').replace(';stream.nsv', '');
+    if (urlMap[`:${path}`]) {
+      return urlMap[`:${path}`];
+    }
+  }
+  
+  return null;
 }
 
 // Scrape the Radio S website for current track info
@@ -387,38 +396,60 @@ async function scrapeRadioSWebsite(alias) {
 
 // Extract track info from the HTML for the specified alias
 function extractRadioSTrackInfo(html, alias) {
-  // Look for the now-playing element for this station
-  const regex = new RegExp(
-    `<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
-    'i'
-  );
-  
-  const match = html.match(regex);
-  
-  if (match) {
-    const artist = match[1].trim();
-    const title = match[2].trim();
-    if (artist && title) {
-      return `${artist} - ${title}`;
+  try {
+    // Look for the now-playing element for this station
+    const regex = new RegExp(
+      `<span id="now-playing-text-${alias}"[^>]*class="[^"]*"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
+      'i'
+    );
+    
+    const match = html.match(regex);
+    
+    if (match && match[1] && match[2]) {
+      const artist = match[1].trim();
+      const title = match[2].trim();
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
     }
-  }
-  
-  // Try alternative pattern that might appear in different sections
-  const altPattern = new RegExp(
-    `data-alias="${alias}"[^>]*>[^<]*<img[^>]+alt="[^"]*"[^>]*>.*?<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
-    'is'
-  );
-  
-  const altMatch = html.match(altPattern);
-  if (altMatch) {
-    const artist = altMatch[1].trim();
-    const title = altMatch[2].trim();
-    if (artist && title) {
-      return `${artist} - ${title}`;
+    
+    // Try alternative pattern without strict class matching
+    const altRegex = new RegExp(
+      `<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
+      'i'
+    );
+    
+    const altMatch = html.match(altRegex);
+    
+    if (altMatch && altMatch[1] && altMatch[2]) {
+      const artist = altMatch[1].trim();
+      const title = altMatch[2].trim();
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
     }
+    
+    // Try another alternative with different HTML structure
+    const dataAliasRegex = new RegExp(
+      `data-alias="${alias}"[^>]*>[\\s\\S]*?<span id="now-playing-text-${alias}"[^>]*>\\s*<strong>([^<]+)<\\/strong><br>([^<]+)<\\/span>`,
+      'i'
+    );
+    
+    const dataAliasMatch = html.match(dataAliasRegex);
+    
+    if (dataAliasMatch && dataAliasMatch[1] && dataAliasMatch[2]) {
+      const artist = dataAliasMatch[1].trim();
+      const title = dataAliasMatch[2].trim();
+      if (artist && title) {
+        return `${artist} - ${title}`;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Radio S parsing error:', error);
+    return null;
   }
-  
-  return null;
 }
 
 // Enhanced extraction with precise targeting to avoid recently played songs
