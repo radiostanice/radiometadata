@@ -61,28 +61,28 @@ export default {
   }
 }
 
-// Handler Selection Logic (Based on the original working version's pattern)
+// Handler Selection Logic (Reverted to match original working pattern, adding only Radio IN)
 function selectHandler(stationUrl) {
   const cleanUrl = normalizeUrlForComparison(stationUrl);
-  
+
   if (isNaxiStation(cleanUrl)) {
     return STATION_HANDLERS.naxi;
   }
-  
+
   // Use original stationUrl for isRadioSStation, like the original working version
   if (isRadioSStation(stationUrl)) {
     return STATION_HANDLERS.radios;
   }
 
-  // Use original stationUrl for isRadioInStation, consistent with isRadioSStation
-  if (isRadioInStation(stationUrl)) { // <-- Added check
+  // Add the new check for Radio IN, using its specific function
+  if (isRadioInStation(stationUrl)) { // <-- Added check, using stationUrl like isRadioSStation
     return STATION_HANDLERS.radioin; // <-- Added return
   }
-  
+
   if (cleanUrl.includes('radioparadise.com')) {
     return STATION_HANDLERS.radioparadise;
   }
-  
+
   return STATION_HANDLERS.default;
 }
 
