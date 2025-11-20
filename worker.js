@@ -3,7 +3,6 @@ const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
   'radios': handleRadioS,
-  'radioin': handleRadioIn, // <-- Added
   'default': handleDefaultStation
 };
 
@@ -61,29 +60,83 @@ export default {
   }
 }
 
-// Handler Selection Logic (Reverted to match original working pattern, adding only Radio IN)
+// Handler Selection Logic
 function selectHandler(stationUrl) {
   const cleanUrl = normalizeUrlForComparison(stationUrl);
-
+  
   if (isNaxiStation(cleanUrl)) {
     return STATION_HANDLERS.naxi;
   }
-
-  // Use original stationUrl for isRadioSStation, like the original working version
+  
   if (isRadioSStation(stationUrl)) {
     return STATION_HANDLERS.radios;
   }
-
-  // Add the new check for Radio IN, using its specific function
-  if (isRadioInStation(stationUrl)) { // <-- Added check, using stationUrl like isRadioSStation
-    return STATION_HANDLERS.radioin; // <-- Added return
-  }
-
+  
   if (cleanUrl.includes('radioparadise.com')) {
     return STATION_HANDLERS.radioparadise;
   }
-
+  
   return STATION_HANDLERS.default;
+}
+
+// Default station handler
+async function handleDefaultStation(stationUrl) {
+  const fetchOptions = {
+    method: 'GET',
+    headers: { 
+      'Icy-MetaData': '1',
+      'User-Agent': 'Mozilla/5.0 (compatible; IcecastMetadataFetcher/1.0)',
+      'Accept-Charset': 'utf-8'
+    },
+    cf: { 
+      cacheTtl: 5,
+      cacheEverything: true
+    }
+  };
+
+  const startTime = Date.now();
+  
+  // Fetch with timeout (3 seconds)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  fetchOptions.signal = controller.signal;
+
+  try {
+    const response = await fetch(stationUrl, fetchOptions);
+    clearTimeout(timeoutId);
+
+    const qualityInfo = {
+      bitrate: response.headers.get('icy-br') || null,
+      metaInterval: response.headers.get('icy-metaint'),
+      contentType: response.headers.get('content-type'),
+      server: response.headers.get('server'),
+      responseTime: Date.now() - startTime,
+      icyHeadersPresent: response.headers.get('icy-metaint') !== null
+    };
+
+    // Check if we have ICY headers for metadata
+    const icyTitle = response.headers.get('icy-title');
+    if (icyTitle && !isLikelyStation(icyTitle)) {
+      return createSuccessResponse(icyTitle, qualityInfo);
+    }
+
+    // Parse metadata from stream if meta interval exists
+    const metaInt = parseInt(response.headers.get('icy-metaint'));
+    if (metaInt) {
+      const currentMetadata = await streamMetadataMonitor(response.clone(), metaInt);
+      if (currentMetadata) {
+        return createSuccessResponse(currentMetadata, qualityInfo);
+      }
+    }
+
+    // If no metadata found, try alternative methods
+    const metadata = await tryAlternativeMethods(response, qualityInfo);
+    
+    return createSuccessResponse(metadata, qualityInfo);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
 }
 
 // Helper function for URL normalization
@@ -496,79 +549,6 @@ function isRadioSStation(stationUrl) {
     .split('/')[0];
     
   return cleanUrl.includes('radios.rs') || cleanUrl.includes('stream.radios.rs');
-}
-
-// Radio IN handler
-async function handleRadioIn(stationUrl) {
-  try {
-    // Radio IN API endpoint for now playing information
-    const apiUrl = 'https://www.radioinbeograd.rs/live/nowonair.php';
-    
-    const response = await fetch(apiUrl, {
-      headers: {
-        'Accept': 'text/html',
-        'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/1.0)',
-        'Referer': 'https://www.radioinbeograd.rs/'
-      },
-      cf: { 
-        cacheTtl: 5,
-        cacheEverything: true
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
-    }
-    
-    const html = await response.text();
-    
-    // Simple approach: split the HTML and find the NOW ON AIR section
-    const nowOnAirStart = html.indexOf('<div class="nowonair">');
-    if (nowOnAirStart === -1) {
-      return createErrorResponse('Radio IN: No now playing section found', 404);
-    }
-    
-    const nowOnAirSection = html.substring(nowOnAirStart);
-    const noapesmaStart = nowOnAirSection.indexOf('<div class="noapesma">');
-    if (noapesmaStart === -1) {
-      return createErrorResponse('Radio IN: No song data found', 404);
-    }
-    
-    const contentStart = noapesmaStart + '<div class="noapesma">'.length;
-    const contentEnd = nowOnAirSection.indexOf('</div>', contentStart);
-    
-    if (contentEnd === -1) {
-      return createErrorResponse('Radio IN: Could not extract song data', 404);
-    }
-    
-    let title = nowOnAirSection.substring(contentStart, contentEnd).trim();
-    
-    if (title) {
-      return createSuccessResponse(title, {
-        source: 'radioin-api',
-        bitrate: '128', // Default assumption for the 128k stream
-        format: 'MP3',
-        responseTime: 0
-      });
-    }
-    
-    return createErrorResponse('Radio IN: No metadata found', 404);
-    
-  } catch (error) {
-    return createErrorResponse(`Radio IN: ${error.message}`, 500);
-  }
-}
-
-// Enhanced function to check if it's a Radio IN station
-function isRadioInStation(stationUrl) {
-  const cleanUrl = stationUrl
-    .replace('https://', '')
-    .replace('http://', '')
-    .replace(';stream.nsv', '')
-    .replace(';*.mp3', '')
-    .split('/')[0];
-    
-  return cleanUrl.includes('radioin') || cleanUrl.includes('radio3-128ssl.streaming.rs');
 }
 
 async function tryAlternativeMethods(response, qualityInfo) {
