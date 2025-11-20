@@ -520,12 +520,16 @@ async function handleRadioIn(stationUrl) {
     
     const html = await response.text();
     
-    // Parse the HTML to extract the "NOW ON AIR" song
-    const nowOnAirMatch = html.match(/<div class="nowonair">[\s\S]*?<div class="noapesma">([^<]+)<\/div>/);
+    // More robust regex to extract the "NOW ON AIR" song
+    // This handles potential whitespace and formatting variations
+    const nowOnAirMatch = html.match(/<div\s+class="nowonair">[\s\S]*?<div\s+class="noapesma">([\s\S]*?)<\/div>/i);
     
     if (nowOnAirMatch && nowOnAirMatch[1]) {
-      const title = nowOnAirMatch[1].trim();
-      // Return the current playing song, even if it's an ad/jingle like "Budi IN - Radio IN"
+      // Clean up the extracted text
+      let title = nowOnAirMatch[1].trim();
+      // Remove any potential HTML entities or tags that might have slipped through
+      title = title.replace(/<[^>]*>/g, '').trim();
+      
       if (title) {
         return createSuccessResponse(title, {
           source: 'radioin-api',
