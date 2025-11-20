@@ -184,7 +184,7 @@ async function handleNaxiRadio(stationUrl) {
       'naxidigital-millennium128ssl.streaming.rs': 'millennium',
       'naxidigital-fitness128ssl.streaming.rs': 'fitness',
       'naxidigital-kids128ssl.streaming.rs': 'kids',
-      'naxidigital-xmas128.streaming.rs:8392': 'xmas'
+      'naxidigital-xmas128.streaming.rs': 'xmas'
     };
     
     // Extract host from station URL
@@ -454,9 +454,9 @@ function isLikelyStationName(text) {
   if (!text || !text.trim()) return true;
   const t = text.toLowerCase();
   return (
-    t.length > 120 ||
+    t.length > 100 ||
     t.split('-').length > 6 ||
-    t.split(' ').length > 10 ||
+    t.split(' ').length > 10
   );
 }
 
