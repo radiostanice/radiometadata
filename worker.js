@@ -429,70 +429,65 @@ async function handleRadioParadise(stationUrl) {
 // Radio S handler
 async function handleRadioS(stationUrl) {
   try {
-    console.log('Radio S handler called with URL:', stationUrl);
-    
     // Map streaming hosts to their corresponding data-alias values
     const hostToAliasMap = {
-      'stream.radios.rs:9000': 's1',       // Radio S1
-      'stream.radios.rs:9010': 's2',       // Radio S2
-      'stream.radios.rs:9020': 's3',       // Radio S3
-      'stream.radios.rs:9030': 's4',       // Radio S4
-      'stream.radios.rs:9036': 's_80te',   // 80-e
-      'stream.radios.rs:9006': 's_rock',   // Rock
-      'stream.radios.rs:9016': 's_pop',     // Pop & Rock
-      'stream.radios.rs:9026': 's_ex_yu',   // Ex Yu
-      'stream.radios.rs:9046': 's_cafe',    // Cafe
-      'stream.radios.rs:9056': 's_lounge',  // Folk Stars (Lounge)
-      'stream.radios.rs:9066': 's_juzni',   // Južni
-      'stream.radios.rs:9076': 's_mchits',  // Trap & Rap
-      'stream.radios.rs:9086': 's_energy',  // Dance
-      'stream.radios.rs:9096': 's_gold',    // Gold
-      'stream.radios.rs:9106': 's_kids',    // Kids
-      'stream.radios.rs:9116': 's_chill',   // Chill
-      'stream.radios.rs:9126': 's_latino',  // Latino
-      'stream.radios.rs:9136': 's_love',   // Xtra
-      'stream.radios.rs:9156': 's_mix',    // Mix
-      'stream.radios.rs:9166': 's_classic', // Classic
-      'stream.radios.rs:9176': 's_jazz',    // Jazz
-      'stream.radios.rs:9186': 's_sport',   // Sport
-      'stream.radios.rs:9196': 's_pop_folk', // Pop Folk
-      'stream.radios.rs:9206': 's_folk',    // Narodni
-      'stream.radios.rs:9216': 's_starogradski' // Starogradski
+      'stream.radios.rs:9000/stream': 's1',       // Radio S1
+      'stream.radios.rs:9010/stream': 's2',       // Radio S2
+      'stream.radios.rs:9020/stream': 's3',       // Radio S3
+      'stream.radios.rs:9030/stream': 's4',       // Radio S4
+      'stream.radios.rs:9036/stream': 's_80te',   // 80-e
+      'stream.radios.rs:9006/stream': 's_rock',   // Rock
+      'stream.radios.rs:9016/stream': 's_pop',     // Pop & Rock
+      'stream.radios.rs:9026/stream': 's_ex_yu',   // Ex Yu
+      'stream.radios.rs:9046/stream': 's_cafe',    // Cafe
+      'stream.radios.rs:9056/stream': 's_lounge',  // Folk Stars
+      'stream.radios.rs:9066/stream': 's_juzni',   // Južni
+      'stream.radios.rs:9076/stream': 's_mchits',  // Trap & Rap
+      'stream.radios.rs:9086/stream': 's_energy',  // Dance
+      'stream.radios.rs:9096/stream': 's_gold',    // Gold
+      'stream.radios.rs:9106/stream': 's_kids',    // Kids
+      'stream.radios.rs:9116/stream': 's_chill',   // Chill
+      'stream.radios.rs:9126/stream': 's_latino',  // Latino
+      'stream.radios.rs:9136/stream': 's_love',   // Xtra
+      'stream.radios.rs:9156/stream': 's_mix',    // Mix
+      'stream.radios.rs:9166/stream': 's_classic', // Classic
+      'stream.radios.rs:9176/stream': 's_jazz',    // Jazz
+      'stream.radios.rs:9186/stream': 's_sport',   // Sport
+      'stream.radios.rs:9196/stream': 's_pop_folk', // Pop Folk
+      'stream.radios.rs:9206/stream': 's_folk',    // Narodni
+      'stream.radios.rs:9216/stream': 's_starogradski' // Starogradski
     };
     
     // Extract host and port from station URL
     const urlObj = new URL(stationUrl);
-    const hostPort = `${urlObj.hostname}:${urlObj.port || '80'}`;
-    
-    console.log('Host and port:', hostPort);
+    const hostPort = `${urlObj.hostname}:${urlObj.port || '80'}${urlObj.pathname}`;
     
     // Determine the station alias
     let alias = null;
     for (const [streamHost, stationAlias] of Object.entries(hostToAliasMap)) {
       if (hostPort.includes(streamHost)) {
         alias = stationAlias;
-        console.log('Found alias:', alias, 'for host:', streamHost);
         break;
       }
     }
     
-    // Try direct mapping with full path if no match
+    // If no match found, try to extract from URL pattern
     if (!alias) {
-      const fullPath = `${urlObj.hostname}:${urlObj.port || '80'}${urlObj.pathname}`;
-      console.log('Trying full path match:', fullPath);
-      for (const [streamHost, stationAlias] of Object.entries(hostToAliasMap)) {
-        if (fullPath.includes(streamHost)) {
-          alias = stationAlias;
-          console.log('Found alias via full path:', alias, 'for host:', streamHost);
-          break;
+      // Try to match common patterns
+      if (stationUrl.includes('stream.radios.rs')) {
+        // Try to extract alias from URL parameters or path if available
+        const urlParams = new URLSearchParams(urlObj.search);
+        if (urlParams.has('alias')) {
+          alias = urlParams.get('alias');
+        } else if (urlParams.has('station')) {
+          alias = urlParams.get('station');
         }
       }
     }
     
-    // If no match found, return detailed error
+    // If still no match, return error
     if (!alias) {
-      console.log('No alias found. Available mappings:', Object.keys(hostToAliasMap));
-      return createErrorResponse(`Radio S: Unknown station URL: ${stationUrl}`, 400);
+      return createErrorResponse('Radio S: Unknown station URL', 400);
     }
     
     // Try to fetch from Radio S API directly
@@ -510,7 +505,6 @@ async function handleRadioS(stationUrl) {
     return createErrorResponse('Radio S: No metadata found', 404);
     
   } catch (error) {
-    console.error('Radio S handler error:', error);
     return createErrorResponse(`Radio S: ${error.message}`, 500);
   }
 }
@@ -518,12 +512,8 @@ async function handleRadioS(stationUrl) {
 // Try to fetch from Radio S API directly
 async function tryRadioSAPI(alias) {
   try {
-    console.log('Trying Radio S API for alias:', alias);
-    
     // Radio S API endpoint for now playing information
     const apiUrl = `https://www.radios.rs/includes/get/now-playing-json.php?radio=${alias}`;
-    
-    console.log('API URL:', apiUrl);
     
     const response = await fetch(apiUrl, {
       headers: {
@@ -537,14 +527,11 @@ async function tryRadioSAPI(alias) {
       }
     });
     
-    console.log('API response status:', response.status);
-    
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      throw new Error(`API request failed: ${response.status}`);
     }
     
     const data = await response.json();
-    console.log('API response data:', JSON.stringify(data, null, 2));
     
     // Check if we have artist and song information
     if (data.artist && data.song) {
@@ -572,9 +559,7 @@ function isRadioSStation(stationUrl) {
     .replace(';*.mp3', '')
     .split('/')[0];
     
-  const isRadioS = cleanUrl.includes('radios.rs') || cleanUrl.includes('stream.radios.rs');
-  console.log('isRadioSStation check:', stationUrl, '->', isRadioS);
-  return isRadioS;
+  return cleanUrl.includes('radios.rs') || cleanUrl.includes('stream.radios.rs');
 }
 
 async function tryAlternativeMethods(response, qualityInfo) {
