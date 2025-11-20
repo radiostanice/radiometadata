@@ -205,7 +205,7 @@ async function handleNaxiRadio(stationUrl) {
       return createErrorResponse('Naxi: Unknown station URL', 400);
     }
     
-    // Try to fetch from Firebase API directly
+    // Try to fetch from Firebase API directly for the specific station
     const firebaseResult = await tryNaxiFirebaseAPI(station);
 
     if (firebaseResult) {
@@ -224,11 +224,11 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-// Try to fetch from Naxi's Firebase API directly
+// Try to fetch from Naxi's Firebase API directly for a specific station
 async function tryNaxiFirebaseAPI(station) {
   try {
-    // Fetch the Firebase document directly
-    const firebaseUrl = `https://firestore.googleapis.com/v1/projects/naxiproject/databases/(default)/documents/now_playing/naxi`;
+    // Fetch the Firebase document for the specific station
+    const firebaseUrl = `https://firestore.googleapis.com/v1/projects/naxiproject/databases/(default)/documents/now_playing/${station}`;
     
     const response = await fetch(firebaseUrl, {
       headers: {
@@ -237,6 +237,10 @@ async function tryNaxiFirebaseAPI(station) {
     });
     
     if (!response.ok) {
+      // If the specific station document doesn't exist, try the main one
+      if (response.status === 404 && station !== 'naxi') {
+        return await tryNaxiFirebaseAPI('naxi');
+      }
       throw new Error(`Firebase API error: ${response.status}`);
     }
     
@@ -247,20 +251,31 @@ async function tryNaxiFirebaseAPI(station) {
       const nowPlayingJson = data.fields.now_playing_json.stringValue;
       const nowPlayingData = JSON.parse(nowPlayingJson);
       
-      // Extract the correct station data
-      // For the main 'live' station or when station-specific data isn't separated
+      // Extract the current playing data
       const current = nowPlayingData.now_playing;
       
       if (current && current.artist && current.title) {
         return `${current.artist} - ${current.title}`;
       }
+    }
+    
+    // Alternative structure - if the data is directly in the document
+    if (data.fields) {
+      // Try to find artist and title fields directly
+      let artist = null;
+      let title = null;
       
-      // If there are multiple stations in the data, find the correct one
-      if (nowPlayingData[station]) {
-        const stationData = nowPlayingData[station];
-        if (stationData.now_playing && stationData.now_playing.artist && stationData.now_playing.title) {
-          return `${stationData.now_playing.artist} - ${stationData.now_playing.title}`;
-        }
+      if (data.fields.artist && data.fields.artist.stringValue) {
+        artist = data.fields.artist.stringValue;
+      }
+      
+      if (data.fields.title && data.fields.title.stringValue) {
+        title = data.fields.title.stringValue;
+      }
+      
+      // If we have both, return the result
+      if (artist && title) {
+        return `${artist} - ${title}`;
       }
     }
     
