@@ -144,76 +144,73 @@ function normalizeUrlForComparison(url) {
     .toLowerCase();
 }
 
-// Enhanced Naxi station handler with correct station mapping
+// Enhanced Naxi station handler that uses Firebase API directly
 async function handleNaxiRadio(stationUrl) {
   try {
-    // Map streaming hosts to their corresponding web pages and data-station values
-    const hostToInfoMap = {
-      'naxi128.streaming.rs:9152': { page: 'live', station: 'live' }, // Live station
-      'naxidigital-rnb128ssl.streaming.rs': { page: 'rnb', station: 'rnb' },
-      'naxidigital-rock128ssl.streaming.rs': { page: 'rock', station: 'rock' },
-      'naxidigital-house128ssl.streaming.rs': { page: 'house', station: 'house' },
-      'naxidigital-cafe128ssl.streaming.rs': { page: 'cafe', station: 'cafe' },
-      'naxidigital-jazz128ssl.streaming.rs': { page: 'jazz', station: 'jazz' },
-      'naxidigital-classic128ssl.streaming.rs': { page: 'classic', station: 'classic' },
-      'naxidigital-80s128ssl.streaming.rs': { page: '80e', station: '80e' },
-      'naxidigital-90s128ssl.streaming.rs': { page: '90e', station: '90e' },
-      'naxidigital-reggae128.streaming.rs': { page: 'reggae', station: 'reggae' },
-      'naxidigital-blues128ssl.streaming.rs': { page: 'blues-rock', station: 'blues-rock' },
-      'naxidigital-chill128ssl.streaming.rs': { page: 'chillout', station: 'chill' },
-      'naxidigital-lounge128ssl.streaming.rs': { page: 'lounge', station: 'lounge' },
-      'naxidigital-dance128ssl.streaming.rs': { page: 'dance', station: 'dance' },
-      'naxidigital-funk128ssl.streaming.rs': { page: 'funk', station: 'funk' },
-      'naxidigital-disco128ssl.streaming.rs': { page: 'disco', station: 'disco' },
-      'naxidigital-evergreen128ssl.streaming.rs': { page: 'evergreen', station: 'evergreen' },
-      'naxidigital-mix128ssl.streaming.rs': { page: 'mix', station: 'mix' },
-      'naxidigital-gold128ssl.streaming.rs': { page: 'gold', station: 'gold' },
-      'naxidigital-latino128ssl.streaming.rs': { page: 'latino', station: 'latino' },
-      'naxidigital-love128ssl.streaming.rs': { page: 'love', station: 'love' },
-      'naxidigital-clubbing128ssl.streaming.rs': { page: 'clubbing', station: 'clubbing' },
-      'naxidigital-exyu128ssl.streaming.rs': { page: 'exyu', station: 'exyu' },
-      'naxidigital-exyurock128ssl.streaming.rs': { page: 'exyurock', station: 'exyurock' },
-      'naxidigital-hype128ssl.streaming.rs': { page: 'hype', station: 'hype' },
-      'naxidigital-70s128ssl.streaming.rs': { page: '70e', station: '70e' },
-      'naxidigital-chillwave128ssl.streaming.rs': { page: 'chillwave', station: 'chillwave' },
-      'naxidigital-instrumental128.streaming.rs': { page: 'instrumental', station: 'instrumental' },
-      'naxidigital-fresh128ssl.streaming.rs': { page: 'fresh', station: 'fresh' },
-      'naxidigital-boem128ssl.streaming.rs': { page: 'boem', station: 'boem' },
-      'naxidigital-adore128ssl.streaming.rs': { page: 'adore', station: 'adore' },
-      'naxidigital-slager128ssl.streaming.rs': { page: 'slager', station: 'slager' },
-      'naxidigital-millennium128ssl.streaming.rs': { page: 'millennium', station: 'millennium' },
-      'naxidigital-fitness128ssl.streaming.rs': { page: 'fitness', station: 'fitness' },
-      'naxidigital-kids128ssl.streaming.rs': { page: 'kids', station: 'kids' },
-      'naxidigital-xmas128ssl.streaming.rs': { page: 'xmas', station: 'xmas' }
+    // Map streaming hosts to their corresponding data-station values
+    const hostToStationMap = {
+      'naxi128.streaming.rs:9152': 'live', // Live station
+      'naxidigital-rnb128ssl.streaming.rs': 'rnb',
+      'naxidigital-rock128ssl.streaming.rs': 'rock',
+      'naxidigital-house128ssl.streaming.rs': 'house',
+      'naxidigital-cafe128ssl.streaming.rs': 'cafe',
+      'naxidigital-jazz128ssl.streaming.rs': 'jazz',
+      'naxidigital-classic128ssl.streaming.rs': 'classic',
+      'naxidigital-80s128ssl.streaming.rs': '80e',
+      'naxidigital-90s128ssl.streaming.rs': '90e',
+      'naxidigital-reggae128.streaming.rs': 'reggae',
+      'naxidigital-blues128ssl.streaming.rs': 'blues-rock',
+      'naxidigital-chill128ssl.streaming.rs': 'chill',
+      'naxidigital-lounge128ssl.streaming.rs': 'lounge',
+      'naxidigital-dance128ssl.streaming.rs': 'dance',
+      'naxidigital-funk128ssl.streaming.rs': 'funk',
+      'naxidigital-disco128ssl.streaming.rs': 'disco',
+      'naxidigital-evergreen128ssl.streaming.rs': 'evergreen',
+      'naxidigital-mix128ssl.streaming.rs': 'mix',
+      'naxidigital-gold128ssl.streaming.rs': 'gold',
+      'naxidigital-latino128ssl.streaming.rs': 'latino',
+      'naxidigital-love128ssl.streaming.rs': 'love',
+      'naxidigital-clubbing128ssl.streaming.rs': 'clubbing',
+      'naxidigital-exyu128ssl.streaming.rs': 'exyu',
+      'naxidigital-exyurock128ssl.streaming.rs': 'exyurock',
+      'naxidigital-hype128ssl.streaming.rs': 'hype',
+      'naxidigital-70s128ssl.streaming.rs': '70e',
+      'naxidigital-chillwave128ssl.streaming.rs': 'chillwave',
+      'naxidigital-instrumental128.streaming.rs': 'instrumental',
+      'naxidigital-fresh128ssl.streaming.rs': 'fresh',
+      'naxidigital-boem128ssl.streaming.rs': 'boem',
+      'naxidigital-adore128ssl.streaming.rs': 'adore',
+      'naxidigital-slager128ssl.streaming.rs': 'slager',
+      'naxidigital-millennium128ssl.streaming.rs': 'millennium',
+      'naxidigital-fitness128ssl.streaming.rs': 'fitness',
+      'naxidigital-kids128ssl.streaming.rs': 'kids',
+      'naxidigital-xmas128ssl.streaming.rs': 'xmas'
     };
     
     // Extract host from station URL
     const urlObj = new URL(stationUrl);
     const host = urlObj.hostname;
     
-    // Determine the web page and data-station value
-    let pageInfo = null;
-    for (const [streamHost, info] of Object.entries(hostToInfoMap)) {
+    // Determine the station value
+    let station = null;
+    for (const [streamHost, stationValue] of Object.entries(hostToStationMap)) {
       if (host.includes(streamHost.split('.')[0])) {
-        pageInfo = info;
+        station = stationValue;
         break;
       }
     }
     
     // If no match found, return error
-    if (!pageInfo) {
+    if (!station) {
       return createErrorResponse('Naxi: Unknown station URL', 400);
     }
     
-    // Build the web URL
-    const webUrl = `https://www.naxi.rs/${pageInfo.page}`;
-    
-    // Scrape the web page with delay
-    const nowPlaying = await tryNaxiWebScraping(webUrl, stationUrl, pageInfo.station);
+    // Try to fetch from Firebase API directly
+    const firebaseResult = await tryNaxiFirebaseAPI(station);
 
-    if (nowPlaying) {
-      return createSuccessResponse(nowPlaying, {
-        source: 'naxi-web',
+    if (firebaseResult) {
+      return createSuccessResponse(firebaseResult, {
+        source: 'naxi-firebase',
         bitrate: '128',
         format: 'MP3',
         responseTime: 0
@@ -227,34 +224,50 @@ async function handleNaxiRadio(stationUrl) {
   }
 }
 
-// Enhanced web scraping function for Naxi.rs with better error handling
-async function tryNaxiWebScraping(url, stationUrl, dataStation) {
+// Try to fetch from Naxi's Firebase API directly
+async function tryNaxiFirebaseAPI(station) {
   try {
-    // Add delay to allow JavaScript to update content (as requested)
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Fetch the Firebase document directly
+    const firebaseUrl = `https://firestore.googleapis.com/v1/projects/naxiproject/databases/(default)/documents/now_playing/naxi`;
     
-    const response = await fetch(url, {
+    const response = await fetch(firebaseUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,sr;q=0.8',
-        'Cache-Control': 'no-cache'
-      },
-      cf: {
-        cacheTtl: 0 // Disable caching for fresh data
+        'Accept': 'application/json',
       }
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const html = await response.text();
-    const result = extractNaxiNowPlaying(html, dataStation, url);
     
-    return result;
+    if (!response.ok) {
+      throw new Error(`Firebase API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Parse the Firestore document structure
+    if (data.fields && data.fields.now_playing_json) {
+      const nowPlayingJson = data.fields.now_playing_json.stringValue;
+      const nowPlayingData = JSON.parse(nowPlayingJson);
+      
+      // Extract the correct station data
+      // For the main 'live' station or when station-specific data isn't separated
+      const current = nowPlayingData.now_playing;
+      
+      if (current && current.artist && current.title) {
+        return `${current.artist} - ${current.title}`;
+      }
+      
+      // If there are multiple stations in the data, find the correct one
+      if (nowPlayingData[station]) {
+        const stationData = nowPlayingData[station];
+        if (stationData.now_playing && stationData.now_playing.artist && stationData.now_playing.title) {
+          return `${stationData.now_playing.artist} - ${stationData.now_playing.title}`;
+        }
+      }
+    }
+    
+    return null;
   } catch (error) {
-    throw error;
+    console.log('Firebase API attempt failed:', error.message);
+    return null;
   }
 }
 
@@ -267,59 +280,6 @@ function isNaxiStation(stationUrl) {
     .split('/')[0];
     
   return cleanUrl.includes('naxi');
-}
-
-// Enhanced extraction with precise targeting to avoid recently played songs
-function extractNaxiNowPlaying(html, dataStation, webUrl) {
-  try {
-    // Target the first occurrence of current-program__data specifically
-    const currentProgramRegex = /<div class="current-program__data">[\s\S]*?<p class="artist-name"[^>]*>([^<]+)<\/p>[\s\S]*?<p class="song-title"[^>]*data-station="([^"]*)"[^>]*>([^<]+)<\/p>/i;
-    
-    const match = html.match(currentProgramRegex);
-    
-    if (match) {
-      const artist = match[1].trim();
-      const stationMatch = match[2].trim();
-      const title = match[3].trim();
-      
-      // Ensure the data-station matches our target station
-      if (stationMatch === dataStation && artist && title) {
-        return `${artist} - ${title}`;
-      }
-    }
-    
-    // Fallback to original pattern matching but with better targeting
-    let artist = null;
-    let title = null;
-    
-    // Find the first matching artist-name within current-program section
-    const currentProgramSection = html.match(/<div class="current-program">([\s\S]*?)<div class="latest-songs">/i);
-    if (currentProgramSection) {
-      const sectionContent = currentProgramSection[1];
-      
-      const artistPattern = /<p[^>]*class="[^"]*artist-name[^"]*"[^>]*>([^<]+)<\/p>/i;
-      const artistMatch = sectionContent.match(artistPattern);
-      if (artistMatch && artistMatch[1]) {
-        artist = artistMatch[1].trim();
-      }
-      
-      // Pattern for song-title with specific data-station within current-program section
-      const titlePattern = new RegExp(`<p[^>]*class="[^"]*song-title[^"]*"[^>]*data-station="${dataStation}"[^>]*>([^<]+)<\\/p>`, 'i');
-      const titleMatch = sectionContent.match(titlePattern);
-      if (titleMatch && titleMatch[1]) {
-        title = titleMatch[1].trim();
-      }
-    }
-    
-    // If we found both, return the result
-    if (artist && title) {
-      return `${artist} - ${title}`;
-    }
-    
-    return null;
-  } catch (e) {
-    return null;
-  }
 }
 
 async function streamMetadataMonitor(response, metaInt) {
@@ -428,7 +388,7 @@ async function handleRadioParadise(stationUrl) {
     const response = await fetch(apiUrl, { 
       cf: { 
         cacheTtl: 5
-      } 
+      }
     });
 
     if (!response.ok) {
