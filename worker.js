@@ -149,7 +149,7 @@ async function handleNaxiRadio(stationUrl) {
   try {
     // Map streaming hosts to their corresponding data-station values
     const hostToStationMap = {
-      'naxi128.streaming.rs:9152': 'live', // Live station
+      'naxi128.streaming.rs:9152': 'live',
       'naxidigital-rnb128ssl.streaming.rs': 'rnb',
       'naxidigital-rock128ssl.streaming.rs': 'rock',
       'naxidigital-house128ssl.streaming.rs': 'house',
@@ -184,7 +184,7 @@ async function handleNaxiRadio(stationUrl) {
       'naxidigital-millennium128ssl.streaming.rs': 'millennium',
       'naxidigital-fitness128ssl.streaming.rs': 'fitness',
       'naxidigital-kids128ssl.streaming.rs': 'kids',
-      'naxidigital-xmas128.streaming.rs': 'xmas'
+      'naxidigital-xmas128.streaming.rs:8392': 'xmas'
     };
     
     // Extract host from station URL
@@ -454,12 +454,9 @@ function isLikelyStationName(text) {
   if (!text || !text.trim()) return true;
   const t = text.toLowerCase();
   return (
-    t.includes('station') ||
-    t.length > 80 ||
-    t.split('-').length > 4 ||
+    t.length > 120 ||
+    t.split('-').length > 6 ||
     t.split(' ').length > 10 ||
-    t.includes('stream') ||
-    t.includes('broadcast') ||
   );
 }
 
