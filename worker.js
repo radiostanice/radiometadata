@@ -2,6 +2,7 @@
 const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
+  'radios': handleRadioS,
   'default': handleDefaultStation
 };
 
@@ -65,6 +66,10 @@ function selectHandler(stationUrl) {
   
   if (isNaxiStation(cleanUrl)) {
     return STATION_HANDLERS.naxi;
+  }
+  
+  if (isRadioSStation(stationUrl)) {
+    return STATION_HANDLERS.radios;
   }
   
   if (cleanUrl.includes('radioparadise.com')) {
@@ -419,6 +424,142 @@ async function handleRadioParadise(stationUrl) {
   } catch (e) {
     return createErrorResponse(`Radio Paradise: ${e.message}`, 503, qualityInfo);
   }
+}
+
+// Radio S handler
+async function handleRadioS(stationUrl) {
+  try {
+    // Map streaming hosts to their corresponding data-alias values
+    const hostToAliasMap = {
+      'stream.radios.rs:9000/stream': 's1',       // Radio S1
+      'stream.radios.rs:9010/stream': 's2',       // Radio S2
+      'stream.radios.rs:9020/stream': 's3',       // Radio S3
+      'stream.radios.rs:9030/stream': 's4',       // Radio S4
+      'stream.radios.rs:9036/stream': 's_80te',   // 80-e
+      'stream.radios.rs:9006/stream': 's_rock',   // Rock
+      'stream.radios.rs:9016/stream': 's_pop',     // Pop & Rock
+      'stream.radios.rs:9026/stream': 's_ex_yu',   // Ex Yu
+      'stream.radios.rs:9046/stream': 's_cafe',    // Cafe
+      'stream.radios.rs:9056/stream': 's_lounge',  // Folk Stars
+      'stream.radios.rs:9066/stream': 's_juzni',   // Južni
+      'stream.radios.rs:9076/stream': 's_mchits',  // Trap & Rap
+      'stream.radios.rs:9086/stream': 's_energy',  // Dance
+      'stream.radios.rs:9096/stream': 's_gold',    // Gold
+      'stream.radios.rs:9106/stream': 's_kids',    // Kids
+      'stream.radios.rs:9116/stream': 's_chill',   // Chill
+      'stream.radios.rs:9126/stream': 's_latino',  // Latino
+      'stream.radios.rs:9136/stream': 's_love',   // Xtra
+      'stream.radios.rs:9156/stream': 's_mix',    // Mix
+      'stream.radios.rs:9166/stream': 's_classic', // Classic
+      'stream.radios.rs:9176/stream': 's_jazz',    // Jazz
+      'stream.radios.rs:9186/stream': 's_sport',   // Sport
+      'stream.radios.rs:9196/stream': 's_pop_folk', // Pop Folk
+      'stream.radios.rs:9206/stream': 's_folk',    // Narodni
+      'stream.radios.rs:9216/stream': 's_starogradski' // Starogradski
+    };
+    
+    // Extract host and port from station URL
+    const urlObj = new URL(stationUrl);
+    const hostPort = `${urlObj.hostname}:${urlObj.port || '80'}${urlObj.pathname}`;
+    
+    // Determine the station alias
+    let alias = null;
+    for (const [streamHost, stationAlias] of Object.entries(hostToAliasMap)) {
+      if (hostPort.includes(streamHost)) {
+        alias = stationAlias;
+        break;
+      }
+    }
+    
+    // If no match found, try to extract from URL pattern
+    if (!alias) {
+      // Try to match common patterns
+      if (stationUrl.includes('stream.radios.rs')) {
+        // Try to extract alias from URL parameters or path if available
+        const urlParams = new URLSearchParams(urlObj.search);
+        if (urlParams.has('alias')) {
+          alias = urlParams.get('alias');
+        } else if (urlParams.has('station')) {
+          alias = urlParams.get('station');
+        }
+      }
+    }
+    
+    // If still no match, return error
+    if (!alias) {
+      return createErrorResponse('Radio S: Unknown station URL', 400);
+    }
+    
+    // Try to fetch from Radio S API directly
+    const radioSResult = await tryRadioSAPI(alias);
+
+    if (radioSResult) {
+      return createSuccessResponse(radioSResult, {
+        source: 'radios-api',
+        bitrate: '128', // Default assumption
+        format: 'MP3',
+        responseTime: 0
+      });
+    }
+
+    return createErrorResponse('Radio S: No metadata found', 404);
+    
+  } catch (error) {
+    return createErrorResponse(`Radio S: ${error.message}`, 500);
+  }
+}
+
+// Try to fetch from Radio S API directly
+async function tryRadioSAPI(alias) {
+  try {
+    // Radio S API endpoint for now playing information
+    const apiUrl = `https://www.radios.rs/includes/get/now-playing-json.php?radio=${alias}`;
+    
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; RadioMetadataFetcher/1.0)',
+        'Referer': 'https://www.radios.rs/'
+      },
+      cf: { 
+        cacheTtl: 5,
+        cacheEverything: true
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Check if we have artist and song information
+    if (data.artist && data.song) {
+      return `${data.artist} - ${data.song}`;
+    }
+    
+    // Fallback to show information if available
+    if (data.show) {
+      return data.show;
+    }
+    
+    return null;
+  } catch (error) {
+    console.log('Radio S API attempt failed:', error.message);
+    return null;
+  }
+}
+
+// Enhanced function to check if it's a Radio S station
+function isRadioSStation(stationUrl) {
+  const cleanUrl = stationUrl
+    .replace('https://', '')
+    .replace('http://', '')
+    .replace(';stream.nsv', '')
+    .replace(';*.mp3', '')
+    .split('/')[0];
+    
+  return cleanUrl.includes('radios.rs') || cleanUrl.includes('stream.radios.rs');
 }
 
 async function tryAlternativeMethods(response, qualityInfo) {
