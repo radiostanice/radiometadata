@@ -520,24 +520,34 @@ async function handleRadioIn(stationUrl) {
     
     const html = await response.text();
     
-    // More robust regex to extract the "NOW ON AIR" song
-    // This handles potential whitespace and formatting variations
-    const nowOnAirMatch = html.match(/<div\s+class="nowonair">[\s\S]*?<div\s+class="noapesma">([\s\S]*?)<\/div>/i);
+    // Simple approach: split the HTML and find the NOW ON AIR section
+    const nowOnAirStart = html.indexOf('<div class="nowonair">');
+    if (nowOnAirStart === -1) {
+      return createErrorResponse('Radio IN: No now playing section found', 404);
+    }
     
-    if (nowOnAirMatch && nowOnAirMatch[1]) {
-      // Clean up the extracted text
-      let title = nowOnAirMatch[1].trim();
-      // Remove any potential HTML entities or tags that might have slipped through
-      title = title.replace(/<[^>]*>/g, '').trim();
-      
-      if (title) {
-        return createSuccessResponse(title, {
-          source: 'radioin-api',
-          bitrate: '128', // Default assumption for the 128k stream
-          format: 'MP3',
-          responseTime: 0
-        });
-      }
+    const nowOnAirSection = html.substring(nowOnAirStart);
+    const noapesmaStart = nowOnAirSection.indexOf('<div class="noapesma">');
+    if (noapesmaStart === -1) {
+      return createErrorResponse('Radio IN: No song data found', 404);
+    }
+    
+    const contentStart = noapesmaStart + '<div class="noapesma">'.length;
+    const contentEnd = nowOnAirSection.indexOf('</div>', contentStart);
+    
+    if (contentEnd === -1) {
+      return createErrorResponse('Radio IN: Could not extract song data', 404);
+    }
+    
+    let title = nowOnAirSection.substring(contentStart, contentEnd).trim();
+    
+    if (title) {
+      return createSuccessResponse(title, {
+        source: 'radioin-api',
+        bitrate: '128', // Default assumption for the 128k stream
+        format: 'MP3',
+        responseTime: 0
+      });
     }
     
     return createErrorResponse('Radio IN: No metadata found', 404);
