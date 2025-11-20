@@ -584,9 +584,9 @@ function isLikelyStationName(text) {
   if (!text || !text.trim()) return true;
   const t = text.toLowerCase();
   return (
-    t.length > 100 ||
+    t.length > 90 ||
     t.split('-').length > 6 ||
-    t.split(' ').length > 10
+    t.split(' ').length > 20
   );
 }
 
