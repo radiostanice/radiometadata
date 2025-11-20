@@ -3,7 +3,7 @@ const STATION_HANDLERS = {
   'naxi': handleNaxiRadio,
   'radioparadise': handleRadioParadise,
   'radios': handleRadioS,
-  'radioin': handleRadioIn,
+  'radioin': handleRadioIn, // <-- Added
   'default': handleDefaultStation
 };
 
@@ -61,7 +61,7 @@ export default {
   }
 }
 
-// Handler Selection Logic
+// Handler Selection Logic (Based on the original working version's pattern)
 function selectHandler(stationUrl) {
   const cleanUrl = normalizeUrlForComparison(stationUrl);
   
@@ -69,12 +69,14 @@ function selectHandler(stationUrl) {
     return STATION_HANDLERS.naxi;
   }
   
-  if (isRadioSStation(cleanUrl)) {
+  // Use original stationUrl for isRadioSStation, like the original working version
+  if (isRadioSStation(stationUrl)) {
     return STATION_HANDLERS.radios;
   }
-  
-  if (isRadioInStation(cleanUrl)) {
-    return STATION_HANDLERS.radioin;
+
+  // Use original stationUrl for isRadioInStation, consistent with isRadioSStation
+  if (isRadioInStation(stationUrl)) { // <-- Added check
+    return STATION_HANDLERS.radioin; // <-- Added return
   }
   
   if (cleanUrl.includes('radioparadise.com')) {
